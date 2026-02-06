@@ -116,8 +116,9 @@ class QWSAForCausalLM(Qwen2_5_VLForConditionalGeneration):
         self.train_mask_decoder = kwargs.get("train_mask_decoder", True)
 
         # 不初始化 visual_model 和 text_hidden_fcs
-        self.visual_model = None
-        self.text_hidden_fcs = None
+        # self.visual_model = None
+        # self.text_hidden_fcs = None
+        # self.initialize_lisa_modules()
 
 
     def initialize_lisa_modules(self):
@@ -183,6 +184,19 @@ class QWSAForCausalLM(Qwen2_5_VLForConditionalGeneration):
         return self.visual_model.image_encoder(sam_input_images)
 
     def forward(self, **kwargs):
+        if "past_key_values" in kwargs or 'super' in kwargs:
+            # kwargs 仅传入 pixel_values,input_ids,labels,attention_mask
+            # key_list=list(kwargs.keys())
+            # for key in key_list:
+            #     if key not in ['pixel_values', 'input_ids', 'labels', 'attention_mask']:
+            #         kwargs.pop(key, None)
+            kwargs.pop('super', None)
+            return super().forward(**kwargs) # self.generate -> super().forward
+        if 'grpo' in kwargs and kwargs['grpo']:
+            return self.model_forward_grpo(**kwargs)
+        return self.model_forward(**kwargs)
+    
+    def model_forward(self, **kwargs):
         """
         Forward propagation logic.
         Handle text generation and mask prediction.
@@ -203,9 +217,13 @@ class QWSAForCausalLM(Qwen2_5_VLForConditionalGeneration):
         kwargs.pop('questions_list', [])
         kwargs.pop('sampled_classes_list', [])
         kwargs.pop('offset', None)
+        kwargs.pop('classes_list', None)
+        kwargs.pop('prompt_ids', None)
+        kwargs.pop('attention_masks_prompts', None)
 
         # 1. Get language model loss and hidden states
         kwargs['output_hidden_states'] = True
+        # pixel_values,input_ids,labels,attention_mask
         outputs = super().forward(**kwargs)
         ce_loss = outputs.loss
         
@@ -295,3 +313,214 @@ class QWSAForCausalLM(Qwen2_5_VLForConditionalGeneration):
                 "mask_loss": mask_loss,
                 "mask_bce_loss": mask_bce_loss,
                 "mask_dice_loss": mask_dice_loss}
+    
+    def model_forward_grpo(
+        self,
+        images: torch.FloatTensor,
+        input_ids: torch.LongTensor,
+        attention_masks: torch.LongTensor,
+        pad_token_id: int ,
+        eos_token_id: int,
+        max_new_tokens: int = None,
+        temperature: float = 1.0,
+        output_hidden_states: bool = True,
+        return_dict_in_generate: bool = True,
+        do_sample: bool=True,
+        early_stopping: bool = False,
+        **kwargs,
+    ):
+        """
+        Forward propagation logic.
+        Handle text generation and mask prediction.
+        """
+        # If in inference mode, directly call parent method without any modifications
+        # if not self.training:
+        #     return super().forward(**kwargs)
+
+        # --- Training mode logic below ---
+        
+        # Separate custom parameters from kwargs
+        outputs=self.generate(
+            # images=images,
+            inputs=input_ids,
+            attention_mask=attention_masks,
+            max_new_tokens=max_new_tokens,
+            output_hidden_states=output_hidden_states,
+            return_dict_in_generate=return_dict_in_generate,
+            do_sample=do_sample,
+            temperature=temperature,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            early_stopping=early_stopping)
+        
+        # 2. Get mask for [SEG] tokens
+        # hidden_states = outputs.hidden_states[-1]
+        if type(outputs.hidden_states[-1]) is tuple:
+            if outputs.hidden_states[-1][-1].shape[1] ==1:
+                hidden_states=torch.cat(outputs.hidden_states[-1], dim=1)
+            else:
+                hidden_states = outputs.hidden_states[-1][-1]
+        elif outputs.hidden_states[-1].shape[1] ==1:
+            hidden_states=torch.cat(outputs.hidden_states, dim=1)
+        else:
+            hidden_states = outputs.hidden_states[-1]
+        # input_ids = kwargs["input_ids"]
+        output_ids = outputs.sequences
+        seg_token_mask = output_ids[:, 1:] == self.seg_token_idx
+        for i in range(seg_token_mask.shape[0]):
+            if seg_token_mask[i].sum() == 0:
+                # 把 seg_token_mask[i] 的最后一个 token 设为 True
+                seg_token_mask[i][-1] = True
+
+        # If mask size needs adjustment
+        if hidden_states.shape[1] > seg_token_mask.shape[1]:
+            seg_token_mask = F.pad(seg_token_mask, (0, hidden_states.shape[1] - seg_token_mask.shape[1]))
+        elif hidden_states.shape[1] < seg_token_mask.shape[1]:
+            seg_token_mask= seg_token_mask[:, -hidden_states.shape[1]:]
+
+        # Extract and project [SEG] embeddings
+        pred_text_embeddings = self.text_hidden_fcs[0](hidden_states[seg_token_mask])
+
+        # 3. Get SAM image embeddings
+        sam_image_embeds = self.get_sam_image_embeddings(images)
+
+        # Use projected text embeddings and SAM image embeddings to predict masks
+        pred_low_res_masks = []
+        seg_token_counts = seg_token_mask.int().sum(-1)
+        seg_token_offset = torch.cat([torch.zeros(1, device=seg_token_counts.device).long(), seg_token_counts.cumsum(-1)])
+
+        # Process each segmentation token to generate masks
+        for i in range(len(seg_token_offset) - 1):
+            start_i, end_i = seg_token_offset[i], seg_token_offset[i + 1]
+            if start_i >= end_i: continue
+
+            current_text_embeds = pred_text_embeddings[start_i:end_i]
+            
+            # Use prompt_encoder to get sparse and dense embeddings
+            sparse_embeddings, dense_embeddings = self.visual_model.prompt_encoder(
+                points=None, boxes=None, masks=None, text_embeds=current_text_embeds.unsqueeze(1)
+            )
+            sparse_embeddings = sparse_embeddings.to(current_text_embeds.dtype)
+
+            # Use mask_decoder to get segmentation masks
+            low_res_masks, _ = self.visual_model.mask_decoder(
+                image_embeddings=sam_image_embeds[i].unsqueeze(0),
+                image_pe=self.visual_model.prompt_encoder.get_dense_pe(),
+                sparse_prompt_embeddings=sparse_embeddings,
+                dense_prompt_embeddings=dense_embeddings,
+                multimask_output=False,
+            )
+            pred_low_res_masks.append(low_res_masks[0])
+        pred_low_res_masks=torch.stack(pred_low_res_masks, dim=0)
+
+
+        B, L = output_ids.shape
+        if L < max_new_tokens + input_ids.shape[1]:
+            pad_len = (max_new_tokens + input_ids.shape[1]) - L
+            pad = torch.full(
+                (B, pad_len),
+                pad_token_id,
+                dtype=output_ids.dtype,
+                device=output_ids.device,
+            )
+            output_ids = torch.cat([output_ids, pad], dim=1)
+        return {
+            'output_ids':output_ids, 
+            'pred_low_res_masks':pred_low_res_masks, 
+        }
+
+
+def evaluate(
+        self,
+        images: torch.FloatTensor,
+        input_ids: torch.LongTensor,
+        resize_list,
+        original_size_list,
+        max_new_tokens: int = None,
+    ):
+        """
+        Forward propagation logic.
+        Handle text generation and mask prediction.
+        """
+        # If in inference mode, directly call parent method without any modifications
+        # if not self.training:
+        #     return super().forward(**kwargs)
+
+        # --- Training mode logic below ---
+        
+        # Separate custom parameters from kwargs
+        with torch.no_grad():
+            outputs=self.generate(
+                # images=images,
+                inputs=input_ids,
+                max_new_tokens=max_new_tokens,
+                num_beams=1,
+                output_hidden_states=True,
+                return_dict_in_generate=True,)
+            
+            # 2. Get mask for [SEG] tokens
+            # hidden_states = outputs.hidden_states[-1]
+            if type(outputs.hidden_states[-1]) is tuple:
+                if outputs.hidden_states[-1][-1].shape[1] ==1:
+                    hidden_states=torch.cat(outputs.hidden_states[-1], dim=1)
+                else:
+                    hidden_states = outputs.hidden_states[-1][-1]
+            elif outputs.hidden_states[-1].shape[1] ==1:
+                hidden_states=torch.cat(outputs.hidden_states, dim=1)
+            else:
+                hidden_states = outputs.hidden_states[-1]
+            # input_ids = kwargs["input_ids"]
+            output_ids = outputs.sequences
+            seg_token_mask = output_ids[:, 1:] == self.seg_token_idx
+            for i in range(seg_token_mask.shape[0]):
+                if seg_token_mask[i].sum() == 0:
+                    # 把 seg_token_mask[i] 的最后一个 token 设为 True
+                    seg_token_mask[i][-1] = True
+
+            # If mask size needs adjustment
+            if hidden_states.shape[1] > seg_token_mask.shape[1]:
+                seg_token_mask = F.pad(seg_token_mask, (0, hidden_states.shape[1] - seg_token_mask.shape[1]))
+            elif hidden_states.shape[1] < seg_token_mask.shape[1]:
+                seg_token_mask= seg_token_mask[:, -hidden_states.shape[1]:]
+
+            # Extract and project [SEG] embeddings
+            pred_text_embeddings = self.text_hidden_fcs[0](hidden_states[seg_token_mask])
+
+            # 3. Get SAM image embeddings
+            sam_image_embeds = self.get_sam_image_embeddings(images)
+
+            # Use projected text embeddings and SAM image embeddings to predict masks
+            pred_low_res_masks = []
+            seg_token_counts = seg_token_mask.int().sum(-1)
+            seg_token_offset = torch.cat([torch.zeros(1, device=seg_token_counts.device).long(), seg_token_counts.cumsum(-1)])
+
+            # Process each segmentation token to generate masks
+            pred_masks = []
+            for i in range(len(seg_token_offset) - 1):
+                start_i, end_i = seg_token_offset[i], seg_token_offset[i + 1]
+                if start_i >= end_i: continue
+
+                current_text_embeds = pred_text_embeddings[start_i:end_i]
+                
+                # Use prompt_encoder to get sparse and dense embeddings
+                sparse_embeddings, dense_embeddings = self.visual_model.prompt_encoder(
+                    points=None, boxes=None, masks=None, text_embeds=current_text_embeds.unsqueeze(1)
+                )
+                sparse_embeddings = sparse_embeddings.to(current_text_embeds.dtype)
+
+                # Use mask_decoder to get segmentation masks
+                low_res_masks, _ = self.visual_model.mask_decoder(
+                    image_embeddings=sam_image_embeds[i].unsqueeze(0),
+                    image_pe=self.visual_model.prompt_encoder.get_dense_pe(),
+                    sparse_prompt_embeddings=sparse_embeddings,
+                    dense_prompt_embeddings=dense_embeddings,
+                    multimask_output=False,
+                )
+                pred_mask = self.visual_model.postprocess_masks(
+                    low_res_masks,
+                    input_size=resize_list[i],
+                    original_size=original_size_list[i],
+                )
+                pred_masks.append(pred_mask[:, 0])
+            
+            return output_ids, pred_masks

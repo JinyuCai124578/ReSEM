@@ -1,111 +1,111 @@
 [
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/plantorgan/image/C080.tif",
+        "image":"/mnt/shared-storage-user/caijinyu/data/plantorgan/image/C080.tif",
         "prompt":"Identify the organelles located along the cell periphery, appearing as elongated structures with smooth contours.",
         "class": "plantorgan_chloroplast"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/plantorgan/image/C080.tif",
+        "image":"/mnt/shared-storage-user/caijinyu/data/plantorgan/image/C080.tif",
         "prompt":"Identify the organelle that occupies a central position in the cell and is characterized by a large, irregular shape with smooth boundaries.",
         "class": "plantorgan_vacuole"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/plantorgan/image/C080.tif",
+        "image":"/mnt/shared-storage-user/caijinyu/data/plantorgan/image/C080.tif",
         "prompt":"Locate the organelle adjacent to the cell wall that exhibits a uniform texture with slightly darker electron density.",
         "class": "plantorgan_nuclear"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/plantorgan/image/C080.tif",
+        "image":"/mnt/shared-storage-user/caijinyu/data/plantorgan/image/C080.tif",
         "prompt":"Identify the organelles that are small, oval, and located primarily along the cell periphery, adjacent to larger structures.",
         "class": "plantorgan_mitochondria"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/cremi/image/patch_B_120_007.png",
+        "image":"/mnt/shared-storage-user/caijinyu/data/cremi/image/patch_B_120_007.png",
         "prompt":"Identify the narrow, elongated region centrally located between two parallel structures.",
         "class": "cremi_cleft"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/cremi/image/patch_B_120_007.png",
+        "image":"/mnt/shared-storage-user/caijinyu/data/cremi/image/patch_B_120_007.png",
         "prompt":"Identify the neuronal region characterized by a dense, granular texture with numerous small, circular structures.",
         "class": "cremi_pre"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/cremi/image/patch_B_120_007.png",
+        "image":"/mnt/shared-storage-user/caijinyu/data/cremi/image/patch_B_120_007.png",
         "prompt":"Segment the area that maintains a close association with the synaptic cleft and is crucial for signal reception.",
         "class": "cremi_post"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/cremi/image/patch_B_120_007.png",
+        "image":"/mnt/shared-storage-user/caijinyu/data/cremi/image/patch_B_120_007.png",
         "prompt":"Can you identify the pair of neurons most likely forming a synaptic connection in this electron microscopic image? Please output a neuron segmentation mask for neurons.",
         "class": "cremi_pre_post"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/organelle/image/f58017ff99c87e7dec2f1ba7aa80792203cebfc39481fa63a96d46889059350b.jpg",
+        "image":"/mnt/shared-storage-user/caijinyu/data/organelle/image/f58017ff99c87e7dec2f1ba7aa80792203cebfc39481fa63a96d46889059350b.jpg",
         "prompt":"Identify the organelles characterized by elongated structures with distinct outer membranes and internal folds enhancing surface area for metabolic reactions.",
         "class": "organelle_mitochondria"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/organelle/image/2eb87dab0a784db46ee1b9a93e08bd010461129d91842801797d2c2ef581af9b.jpg",
+        "image":"/mnt/shared-storage-user/caijinyu/data/organelle/image/2eb87dab0a784db46ee1b9a93e08bd010461129d91842801797d2c2ef581af9b.jpg",
         "prompt":"Which organelle is centrally located and shows a contrast in electron density compared to its surrounding area?",
         "class": "organelle_nuclear"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/organelle/image/6d5f1cadeab1ce3dee369d6be6a68bd70a436bc0c31baaeeef0c4fdb8122146f.jpg",
+        "image":"/mnt/shared-storage-user/caijinyu/data/organelle/image/6d5f1cadeab1ce3dee369d6be6a68bd70a436bc0c31baaeeef0c4fdb8122146f.jpg",
         "prompt":"Identify the organelle characterized by a network of interconnected membranous tubules and flattened sacs.",
         "class": "organelle_er"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/nanoparticle/images/1.png",
+        "image":"/mnt/shared-storage-user/caijinyu/data/nanoparticle/images/1.png",
         "prompt":"Identify the uniformly distributed spherical entities across the field of view that exhibit a range of sizes.",
         "class": "nanoparticle"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/ceramic/images/img942.png",
+        "image":"/mnt/shared-storage-user/caijinyu/data/ceramic/images/img942.png",
         "prompt":"Identify the regions that form a continuous network crucial for electrical conduction.",
         "class": "ceramic_positive"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/ceramic/images/img942.png",
+        "image":"/mnt/shared-storage-user/caijinyu/data/ceramic/images/img942.png",
         "prompt":"Determine the features that contribute to the complex microstructure of the ceramic by forming isolated pockets.",
         "class": "ceramic_negative"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/defect/images/image7.tiff",
+        "image":"/mnt/shared-storage-user/caijinyu/data/defect/images/image7.tiff",
         "prompt":"Identify the defects that appear as isolated points, each representing a single substitution within the monolayer, and are randomly distributed without clustering.",
         "class": "defect_1doped"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/defect/images/image7.tiff",
+        "image":"/mnt/shared-storage-user/caijinyu/data/defect/images/image7.tiff",
         "prompt":"Segment the areas that show a consistent spacing relative to other defect types, indicative of a controlled doping process.",
         "class": "defect_2doped"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/defect/images/image7.tiff",
+        "image":"/mnt/shared-storage-user/caijinyu/data/defect/images/image7.tiff",
         "prompt":"Identify the features in the image that appear as distinct, isolated points, indicating a missing component within the lattice structure.",
         "class": "defect_1vacancy"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/defect/images/image7.tiff",
+        "image":"/mnt/shared-storage-user/caijinyu/data/defect/images/image7.tiff",
         "prompt":"Segment the defects that appear as isolated points and are crucial for altering the conductivity of the material.",
         "class": "defect_2vacancy"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/micronet/EBC1/test/070516#1_S1160030.tif",
+        "image":"/mnt/shared-storage-user/caijinyu/data/micronet/EBC1/test/070516#1_S1160030.tif",
         "prompt":"Identify the continuous layer that forms a protective barrier directly above the darker region in the lower part of the image.",
         "class": "micronet_ebc_coat"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/micronet/EBC1/test/070516#1_S1160030.tif",
+        "image":"/mnt/shared-storage-user/caijinyu/data/micronet/EBC1/test/070516#1_S1160030.tif",
         "prompt":"Identify the features that indicate potential stress points or weaknesses in the material.",
         "class": "micronet_ebc_crack"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/micronet/Super1/test/spot2_0d_0.tif",
+        "image":"/mnt/shared-storage-user/caijinyu/data/micronet/Super1/test/spot2_0d_0.tif",
         "prompt":"Locate the irregularly shaped formations that are dispersed throughout the matrix and contribute to increased strength.",
         "class": "micronet_super_2precipitate"
     },
     {
-        "image":"/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/micronet/Super1/test/spot2_0d_0.tif",
+        "image":"/mnt/shared-storage-user/caijinyu/data/micronet/Super1/test/spot2_0d_0.tif",
         "prompt":"Segment the small, spherical structures that are interspersed between larger, irregularly shaped features.",
         "class": "micronet_super_3precipitate"
     }

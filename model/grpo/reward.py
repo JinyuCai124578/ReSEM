@@ -70,6 +70,9 @@ def key_words_reward_cal(completions, answers, **kwargs):
     w_spatial_function = 1.0
     w_reasoning = 0.2           # small reward per reasoning keyword
     max_reasoning_reward = 1.0  # cap to avoid keyword spamming
+    # w_spatial_function = 0
+    # w_reasoning = 0           # small reward per reasoning keyword
+    # max_reasoning_reward = 0  # cap to avoid keyword spamming
     w_seg_after_spatial = 1.5   # encourage SEG after spatial info
 
     for response in responses:

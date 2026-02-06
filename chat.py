@@ -17,7 +17,7 @@ from utils.utils import (DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN,
 import random
 def parse_args(args):
     parser = argparse.ArgumentParser(description="LISA chat")
-    parser.add_argument("--version", default="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/cache/models--xinlai--LISA-13B-llama2-v1/snapshots/b89000be11ad0a45512745a15063f2f6af1d9a5c")
+    parser.add_argument("--version", default="/mnt/shared-storage-user/ai4sdata2-share/caijinyu/runs/lisa-em-qa-lora-lr1e-5")
     parser.add_argument("--vis_save_path", default="./vis_output", type=str)
     parser.add_argument(
         "--precision",
@@ -173,7 +173,6 @@ def main(args):
             torch.cuda.empty_cache()
             print("bye")
             break
-        prompt = DEFAULT_IMAGE_TOKEN + "\n" + prompt + random.choice(EXPLANATORY_QUESTION_LIST)
         prompt = DEFAULT_IMAGE_TOKEN + "\n" + prompt + random.choice(EXPLANATORY_QUESTION_LIST)
         if args.use_mm_start_end:
             replace_token = (

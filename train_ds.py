@@ -826,6 +826,7 @@ def validate_text(val_loader, model_engine, epoch, writer, tokenizer, args):
     intersection_meter = AverageMeter("Intersec", ":6.3f", Summary.SUM)
     union_meter = AverageMeter("Union", ":6.3f", Summary.SUM)
     acc_iou_meter = AverageMeter("gIoU", ":6.3f", Summary.SUM)
+    f1_meter = AverageMeter("F1", ":6.3f", Summary.SUM)
     bleu_meter=AverageMeter("Bleu", ":6.3f", Summary.SUM)
     cider_meter=AverageMeter("CIDEr", ":6.3f", Summary.SUM)
     bertscorep_meter=AverageMeter("BERTScore_P", ":6.3f", Summary.SUM)
@@ -853,10 +854,10 @@ def validate_text(val_loader, model_engine, epoch, writer, tokenizer, args):
         for i in range(len(input_dict["input_ids"])):
             
             with torch.no_grad():
-                output_ids, pred_masks = model_engine.module.evaluate(
+                output_ids, pred_masks = model_engine.evaluate(
                     input_dict["images_clip"],
                     input_dict["images"],
-                    input_dict["input_ids"][i].unsqueeze(0),
+                    input_dict["prompt_ids"][i].unsqueeze(0),
                     input_dict["resize_list"],
                     # input_dict["resize_list"],
                     [(input_dict["masks_list"][0].shape[1], input_dict["masks_list"][0].shape[2])],
@@ -871,7 +872,9 @@ def validate_text(val_loader, model_engine, epoch, writer, tokenizer, args):
             text_output = text_output.replace("\n", "").replace("  ", " ").replace('<unk>', '')
             text_output = text_output.split('ASSISTANT: ')[-1]
             text_output_gt = input_dict["conversation_list"][i].split('ASSISTANT: ')[-1] # todo
-            
+            target_name=input_dict["classes_list"][0][i]
+            f1=1.0 if target_name.replace("_", " ").lower() in text_output.lower() else 0.0
+            f1_meter.update(f1)
             
             intersection, union, acc_iou = 0.0, 0.0, 0.0
             intersection, union, _ = intersectionAndUnionGPU(
@@ -901,9 +904,9 @@ def validate_text(val_loader, model_engine, epoch, writer, tokenizer, args):
     bertscorep_meter.all_reduce()
     bertscorer_meter.all_reduce()
     bertscoref1_meter.all_reduce()
+    f1_meter.all_reduce()
 
     iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
-    pdb.set_trace()
     ciou = iou_class[1]
     giou = acc_iou_meter.avg[1]
 
@@ -912,8 +915,9 @@ def validate_text(val_loader, model_engine, epoch, writer, tokenizer, args):
     bertscorep = bertscorep_meter.avg
     bertscorer = bertscorer_meter.avg
     bertscoref1 = bertscoref1_meter.avg
+    f1= f1_meter.avg
 
-    if args.local_rank == 0:
+    if args.local_rank == 0 and writer:
         writer.add_scalar("val/giou", giou, epoch)
         writer.add_scalar("val/ciou", ciou, epoch)
         writer.add_scalar("val/bleu", bleu, epoch)
@@ -924,8 +928,9 @@ def validate_text(val_loader, model_engine, epoch, writer, tokenizer, args):
         print("giou: {:.4f}, ciou: {:.4f}".format(giou, ciou))
         print("bleu: {:.4f}, cider: {:.4f}".format(bleu, cider))
         print("bert score p: {:.4f}, r: {:.4f}, f1: {:.4f}".format(bertscorep, bertscorer, bertscoref1))
+        print("f1: {:.4f}".format(f1))
 
-    return giou, ciou, {'bleu': bleu, 'cider': cider, 'bert_score_p': bertscorep, 'bert_score_r': bertscorer, 'bert_score_f1': bertscoref1}
+    return giou, ciou, {'bleu': bleu, 'cider': cider, 'bert_score_p': bertscorep, 'bert_score_r': bertscorer, 'bert_score_f1': bertscoref1, 'f1': f1}
 
 if __name__ == "__main__":
     main(sys.argv[1:])

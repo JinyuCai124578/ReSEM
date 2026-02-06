@@ -175,8 +175,10 @@ class LISAQwenForCausalLM(LlavaQwenForCausalLM):
         return image_embeddings
 
     def forward(self, **kwargs):
-        if "past_key_values" in kwargs:
-            return super().forward(**kwargs)
+        if "past_key_values" in kwargs or 'super' in kwargs:
+            return super().forward(**kwargs) # self.generate -> super().forward
+        if 'grpo' in kwargs and kwargs['grpo']:
+            return self.model_forward_grpo(**kwargs)
         return self.model_forward(**kwargs)
 
     def model_forward(
@@ -367,6 +369,130 @@ class LISAQwenForCausalLM(LlavaQwenForCausalLM):
             "mask_bce_loss": mask_bce_loss,
             "mask_dice_loss": mask_dice_loss,
             "mask_loss": mask_loss,
+        }
+    
+    def model_forward_grpo(
+        self,
+        images: torch.FloatTensor,
+        images_clip: torch.FloatTensor,
+        input_ids: torch.LongTensor,
+        attention_masks: torch.LongTensor,
+        pad_token_id: int ,
+        eos_token_id: int,
+        max_new_tokens: int = None,
+        temperature: float = 1.0,
+        output_hidden_states: bool = True,
+        return_dict_in_generate: bool = True,
+        do_sample: bool=True,
+        early_stopping: bool = False,
+        **kwargs,
+    ):
+        outputs = self.generate(
+            images=images_clip,
+            input_ids=input_ids,
+            attention_mask=attention_masks,
+            max_new_tokens=max_new_tokens,
+            output_hidden_states=output_hidden_states,
+            return_dict_in_generate=return_dict_in_generate,
+            do_sample=do_sample,
+            temperature=temperature,
+            pad_token_id=pad_token_id,
+            eos_token_id=eos_token_id,
+            early_stopping=early_stopping
+        )
+        # import pdb; pdb.set_trace()
+        output_hidden_states = outputs.hidden_states[-1][-1] if type(outputs.hidden_states[-1]) is tuple else outputs.hidden_states[-1]
+        if type(outputs.hidden_states[-1]) is tuple:
+            output_hidden_states = outputs.hidden_states[-1][-1]
+        elif outputs.hidden_states[-1].shape[1] ==1:
+            output_hidden_states=torch.cat(outputs.hidden_states, dim=1)
+        else:
+            output_hidden_states = outputs.hidden_states[-1]
+    
+
+        output_ids = outputs.sequences # torch.Size([4, 166])
+        seg_token_mask = output_ids[:, 1:] == self.seg_token_idx
+        for i in range(seg_token_mask.shape[0]):
+            if seg_token_mask[i].sum() == 0:
+                # 把 seg_token_mask[i] 的最后一个 token 设为 True
+                seg_token_mask[i][-1] = True
+        # hack for IMAGE_TOKEN_INDEX (we suppose that there is only one image, and it is in the front)
+        seg_token_mask = torch.cat(
+            [
+                torch.zeros((seg_token_mask.shape[0], 255)).bool().cuda(),
+                seg_token_mask,
+            ],
+            dim=1,
+        )
+
+        hidden_states = []
+
+        assert len(self.model.text_hidden_fcs) == 1
+        hidden_states.append(self.model.text_hidden_fcs[0](output_hidden_states)) 
+
+        last_hidden_state = torch.stack(hidden_states, dim=-1).sum(dim=-1)
+        # import pdb; pdb.set_trace()
+        pred_embeddings = last_hidden_state[seg_token_mask]
+
+        seg_token_counts = seg_token_mask.int().sum(-1)  # [bs, ]
+        seg_token_offset = seg_token_counts.cumsum(-1)
+        seg_token_offset = torch.cat(
+            [torch.zeros(1).long().cuda(), seg_token_offset], dim=0
+        )
+
+        pred_embeddings_ = []
+        for i in range(len(seg_token_offset) - 1):
+            start_i, end_i = seg_token_offset[i], seg_token_offset[i + 1]
+            pred_embeddings_.append(pred_embeddings[start_i:end_i])
+        pred_embeddings = pred_embeddings_
+
+        image_embeddings = self.get_visual_embs(images)
+
+        multimask_output = False
+        pred_low_res_masks = []
+        for i in range(len(pred_embeddings)):
+            (
+                sparse_embeddings,
+                dense_embeddings,
+            ) = self.model.visual_model.prompt_encoder(
+                points=None,
+                boxes=None,
+                masks=None,
+                text_embeds=pred_embeddings[i].unsqueeze(1),
+            )
+
+            sparse_embeddings = sparse_embeddings.to(pred_embeddings[i].dtype)
+            low_res_masks, iou_predictions = self.model.visual_model.mask_decoder(
+                image_embeddings=image_embeddings[i].unsqueeze(0),
+                image_pe=self.model.visual_model.prompt_encoder.get_dense_pe(),
+                sparse_prompt_embeddings=sparse_embeddings,
+                dense_prompt_embeddings=dense_embeddings,
+                multimask_output=multimask_output,
+            )
+            pred_low_res_masks.append(low_res_masks[0])
+            # pred_mask = self.model.visual_model.postprocess_masks(
+            #     low_res_masks,
+            #     input_size=resize_list[i],
+            #     original_size=label_list[i],
+            # )
+            # pred_masks.append(pred_mask[:, 0])
+
+        # prompt_length = input_ids.shape[1]
+        # completion_ids=output_ids[:, prompt_length:]
+        pred_low_res_masks=torch.stack(pred_low_res_masks, dim=0)
+        B, L = output_ids.shape
+        if L < max_new_tokens + input_ids.shape[1]:
+            pad_len = (max_new_tokens + input_ids.shape[1]) - L
+            pad = torch.full(
+                (B, pad_len),
+                pad_token_id,
+                dtype=output_ids.dtype,
+                device=output_ids.device,
+            )
+            output_ids = torch.cat([output_ids, pad], dim=1)
+        return {
+            'output_ids':output_ids, # 需要pad成相同长度
+            'pred_low_res_masks':pred_low_res_masks, # 需要变成张量
         }
 
     def evaluate(

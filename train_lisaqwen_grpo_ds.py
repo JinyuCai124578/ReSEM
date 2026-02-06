@@ -152,7 +152,6 @@ def parse_args(args):
     parser.add_argument('--score_text', action='store_true', default=False)
     parser.add_argument('--lora_module_full_finetune', action='store_true', default=False)
     parser.add_argument("--num_generations", default=4, type=int)
-    parser.add_argument("--weight", default="", type=str, required=False)
     # reward_weight default is (1,1,10,0)
     parser.add_argument(
         "--reward_weights",
@@ -239,14 +238,9 @@ def main(args):
     #             ),
     #         }
     #     )
-    if "qwen" in args.version:
-        model = LISAQwenForCausalLM.from_pretrained(
-            args.version, low_cpu_mem_usage=True, **kwargs
-        )
-    else:
-        model = LISAForCausalLM.from_pretrained(
-            args.version, low_cpu_mem_usage=True, **kwargs
-        )
+    model = LISAQwenForCausalLM.from_pretrained(
+        args.version, low_cpu_mem_usage=True, **kwargs
+    )
 
     model.config.eos_token_id = tokenizer.eos_token_id
     model.config.bos_token_id = tokenizer.bos_token_id

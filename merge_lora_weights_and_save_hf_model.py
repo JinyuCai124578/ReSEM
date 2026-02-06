@@ -13,6 +13,7 @@ from transformers import AutoTokenizer
 
 from model.LISA import LISAForCausalLM
 from model.LISA_qwen import LISAQwenForCausalLM
+from model.LISA_qwsa import QWSAForCausalLM
 from utils.utils import DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN
 from tqdm import tqdm
 
@@ -103,7 +104,14 @@ def main(args):
         torch_dtype = torch.bfloat16
     elif args.precision == "fp16":
         torch_dtype = torch.half
-    if "qwen" in args.version:
+    if "Qwen2.5-VL" in args.version:
+        model_args["vision_pretrained"] = args.vision_pretrained
+        model=QWSAForCausalLM.from_pretrained(
+        args.version,
+        # cache_dir="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/qwen",
+        low_cpu_mem_usage=False, **model_args
+    )
+    elif "qwen" in args.version:
         model = LISAQwenForCausalLM.from_pretrained(
             args.version,
             # cache_dir="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/qwen",
@@ -117,10 +125,13 @@ def main(args):
     model.config.bos_token_id = tokenizer.bos_token_id
     model.config.pad_token_id = tokenizer.pad_token_id
 
-    model.get_model().initialize_vision_modules(model.get_model().config)
-    vision_tower = model.get_model().get_vision_tower()
-    vision_tower.to(dtype=torch_dtype)
-    model.get_model().initialize_lisa_modules(model.get_model().config)
+    if "Qwen2.5-VL" in args.version:
+        pass
+    else:
+        model.get_model().initialize_vision_modules(model.get_model().config)
+        vision_tower = model.get_model().get_vision_tower()
+        vision_tower.to(dtype=torch_dtype)
+        model.get_model().initialize_lisa_modules(model.get_model().config)
 
     lora_r = args.lora_r if not args.train_mask_decoder_only else 0
     if args.full_finetune:
@@ -199,6 +210,7 @@ def main(args):
 
     # for deepspeed version higher than 0.15.2 https://github.com/dvlab-research/LISA/issues/90
     import json
+    import gc
     index_file = os.path.join(args.weight, "pytorch_model.bin.index.json")
 
     with open(index_file, "r", encoding="utf-8") as f:
@@ -207,19 +219,25 @@ def main(args):
     weight_map = index_dict["weight_map"]  # dict
 
     shard_files = set(weight_map.values()) 
-    full_state_dict = {}
 
-    for shard_file in tqdm(shard_files):
+    for shard_file in tqdm(shard_files, desc="Loading shards into model"):
         shard_path = os.path.join(args.weight, shard_file)
-        shard_state_dict = torch.load(shard_path, map_location="cpu")
-        full_state_dict.update(shard_state_dict)
+
+        shard_state = torch.load(shard_path, map_location="cpu", weights_only=True)
+
+        # 加载到 model（只写入本 shard 内的参数）
+        model.load_state_dict(shard_state, strict=False)
+
+        # 释放内存
+        del shard_state
+        gc.collect()
+        torch.cuda.empty_cache()
 
     """
     RuntimeError: Error(s) in loading state_dict for PeftModelForCausalLM:
             size mismatch for base_model.model.model.embed_tokens.weight: copying a param with shape torch.Size([32004, 5120]) from checkpoint, the shape in current model is torch.Size([32003, 5120]).
             size mismatch for base_model.model.lm_head.weight: copying a param with shape torch.Size([32004, 5120]) from checkpoint, the shape in current model is torch.Size([32003, 5120]).
     """
-    model.load_state_dict(full_state_dict, strict=False)
 
     if lora_r>0:
         model = model.merge_and_unload()
@@ -227,6 +245,11 @@ def main(args):
     for k, v in model.state_dict().items():
         if "vision_tower" not in k:
             state_dict[k] = v
+    # warning
+    # model.generation_config.validate()  # 手动调用验证，观察其他潜在问题（可选）
+    # model.generation_config._validate = False  # 强制跳过验证
+    model.generation_config.pad_token_id=0
+    # warning
     model.save_pretrained(args.save_path, state_dict=state_dict)
     tokenizer.save_pretrained(args.save_path)
 

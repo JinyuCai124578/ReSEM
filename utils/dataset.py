@@ -866,7 +866,7 @@ class ValDataset_EM(torch.utils.data.Dataset):
                 json_path=os.path.join(base_image_dir,  data, f"{splits}_d_qa.json")
             else:
                 json_path=os.path.join(base_image_dir,  data, f"{splits}.json")
-            json_data=json.load(open(json_path))
+            json_data=json.load(open(json_path)) if os.path.exists(json_path) else []
             for item in json_data:
                 item['image_path']=os.path.join(base_image_dir, data, item['image_name'])
                 item['data_root']=os.path.join(base_image_dir, data)

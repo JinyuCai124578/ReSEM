@@ -20,14 +20,10 @@ from utils.utils import (DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN,
 import pdb
 import random
 from train_ds import validate
-from tqdm import tqdm
-import gc
-import json
+import transformers
+from PIL import Image
 
 import traceback
-
-random.seed(42)
-
 
 def info(type, value, tb):
     traceback.print_exception(type, value, tb)
@@ -113,6 +109,9 @@ def main(args):
     tokenizer.pad_token = tokenizer.unk_token
     args.seg_token_idx = tokenizer("[SEG]", add_special_tokens=False).input_ids[0]
 
+    processer=transformers.AutoProcessor.from_pretrained(args.version, trust_remote_code=True)
+    processer.tokenizer = tokenizer
+
 
     torch_dtype = torch.float32
     if args.precision == "bf16":
@@ -145,77 +144,23 @@ def main(args):
                 ),
             }
         )
-    if "qwenvl" in args.version:
-        model = QWSAForCausalLM.from_pretrained(
-            args.version, low_cpu_mem_usage=True, vision_tower=args.vision_tower, seg_token_idx=args.seg_token_idx, **kwargs
-        )
-    elif "qwen" in args.version:
-        model = LISAQwenForCausalLM.from_pretrained(
-            args.version, low_cpu_mem_usage=True, vision_tower=args.vision_tower, seg_token_idx=args.seg_token_idx, **kwargs
-        )
-    else:
-        model = LISAForCausalLM.from_pretrained(
-            args.version, low_cpu_mem_usage=True, vision_tower=args.vision_tower, seg_token_idx=args.seg_token_idx, **kwargs
-        )
-
+    model = QWSAForCausalLM.from_pretrained(
+        args.version, low_cpu_mem_usage=True, vision_tower=args.vision_tower, seg_token_idx=args.seg_token_idx, **kwargs
+    )
     model.config.eos_token_id = tokenizer.eos_token_id
     model.config.bos_token_id = tokenizer.bos_token_id
     model.config.pad_token_id = tokenizer.pad_token_id
 
-    if "qwenvl" in args.version:
-        pass
-    else:
-        model.get_model().initialize_vision_modules(model.get_model().config)
-        vision_tower = model.get_model().get_vision_tower()
-        vision_tower.to(dtype=torch_dtype)
-    
-
-
-    if args.precision == "bf16":
-        model = model.bfloat16().cuda()
-    elif (
-        args.precision == "fp16" and (not args.load_in_4bit) and (not args.load_in_8bit)
-    ):
-        vision_tower = model.get_model().get_vision_tower()
-        model.model.vision_tower = None
-        import deepspeed
-
-        model_engine = deepspeed.init_inference(
-            model=model,
-            dtype=torch.half,
-            replace_with_kernel_inject=True,
-            replace_method="auto",
-        )
-        model = model_engine.module
-        model.model.vision_tower = vision_tower.half().cuda()
-    elif args.precision == "fp32":
-        model = model.float().cuda()
-
-    vision_tower = model.get_model().get_vision_tower()
-    vision_tower.to(device=args.local_rank)
-
-    if 'siglip' in model.config.vision_tower:
-        clip_image_processor = SigLipVisionTower(model.config.vision_tower).image_processor
-    else:
-        clip_image_processor = CLIPImageProcessor.from_pretrained(model.config.vision_tower)
-        
-    transform = ResizeLongestSide(args.image_size)
-
-    # if args.weight != "" :
-    #     if "lora" in args.weight.lower():
-    #         state_dict = torch.load(args.weight, map_location="cpu")
-    #         model_dict = model.state_dict()
-    #         state_dict = {k: v for k, v in state_dict.items() if k in model_dict}
-    #         model.load_state_dict(state_dict, strict=False)
-    #         print("Loaded LORA weights")
-    #     else:
-    #         state_dict = torch.load(args.weight, map_location="cpu")
-    #         model.load_state_dict(torch.load(args.weight))
-    if args.weight != "":
+    if args.weight != '':
+        import tqdm
+        import gc
         index_file = os.path.join(args.weight, "pytorch_model.bin.index.json")
+
         with open(index_file, "r", encoding="utf-8") as f:
             index_dict = json.load(f)
+
         weight_map = index_dict["weight_map"]  # dict
+
         shard_files = set(weight_map.values()) 
 
         for shard_file in tqdm(shard_files, desc="Loading shards into model"):
@@ -225,85 +170,100 @@ def main(args):
 
             # 加载到 model（只写入本 shard 内的参数）
             model.load_state_dict(shard_state, strict=False)
+
             # 释放内存
             del shard_state
             gc.collect()
             torch.cuda.empty_cache()
+
+
+
+    if args.precision == "bf16":
+        model = model.bfloat16().cuda()
+    elif (
+        args.precision == "fp16" and (not args.load_in_4bit) and (not args.load_in_8bit)
+    ):
+        import deepspeed
+        model_engine = deepspeed.init_inference(
+            model=model,
+            dtype=torch.half,
+            replace_with_kernel_inject=True,
+            replace_method="auto",
+        )
+        model = model_engine.module
+    elif args.precision == "fp32":
+        model = model.float().cuda()
+
+
+
+    if 'siglip' in model.config.vision_tower:
+        clip_image_processor = SigLipVisionTower(model.config.vision_tower).image_processor
+    else:
+        clip_image_processor = CLIPImageProcessor.from_pretrained(model.config.vision_tower)
+        
+    transform = ResizeLongestSide(args.image_size)
+
+    if args.weight != "" :
+        if "lora" in args.weight.lower():
+            state_dict = torch.load(args.weight, map_location="cpu")
+            model_dict = model.state_dict()
+            state_dict = {k: v for k, v in state_dict.items() if k in model_dict}
+            model.load_state_dict(state_dict, strict=False)
+            print("Loaded LORA weights")
+        else:
+            state_dict = torch.load(args.weight, map_location="cpu")
+            model.load_state_dict(torch.load(args.weight))
     
     model.eval()
 
-    def chat(prompt,image_path,class_name, answer=''):
-        conv = conversation_lib.conv_templates[args.conv_type].copy()
-        conv.messages = []
+    def preprocess(self, x: torch.Tensor) -> torch.Tensor:
+        """Normalize pixel values and pad to a square input."""
+        # Normalize colors
+        x = (x - self.pixel_mean) / self.pixel_std
 
-        prompt = DEFAULT_IMAGE_TOKEN + "\n" + prompt + random.choice(EXPLANATORY_QUESTION_LIST)
-        # prompt = DEFAULT_IMAGE_TOKEN + "\n" + prompt # + random.choice(EXPLANATORY_QUESTION_LIST)
-        if args.use_mm_start_end:
-            replace_token = (
-                DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
-            )
-            prompt = prompt.replace(DEFAULT_IMAGE_TOKEN, replace_token)
+        # Pad
+        h, w = x.shape[-2:]
+        padh = self.img_size - h
+        padw = self.img_size - w
+        x = F.pad(x, (0, padw, 0, padh))
+        return x
 
-        conv.append_message(conv.roles[0], prompt)
-        conv.append_message(conv.roles[1], answer)
-        prompt = conv.get_prompt()
-        image_name=image_path.split('.')[0].split('/')[-1]
-
-        if not os.path.exists(image_path):
-            print("File not found in {}".format(image_path))
-            return
-        
+    def chat(prompt,image_path,class_name):
         if "tiff" in image_path:
             image=cv2.imread(image_path,cv2.IMREAD_UNCHANGED)
             image = (image-np.min(image))/(np.max(image)-np.min(image)) *255
-            image_np=cv2.cvtColor(image.astype(np.uint8),cv2.COLOR_GRAY2BGR)
+            image=cv2.cvtColor(image.astype(np.uint8),cv2.COLOR_GRAY2BGR)
         else:
-            image_np = cv2.imread(image_path)
-
-        image_np = cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB)
-        original_size_list = [image_np.shape[:2]]
-
-        image_clip = (
-            clip_image_processor.preprocess(image_np, return_tensors="pt")[
-                "pixel_values"
-            ][0]
-            .unsqueeze(0)
-            .cuda()
-        )
-        if args.precision == "bf16":
-            image_clip = image_clip.bfloat16()
-        elif args.precision == "fp16":
-            image_clip = image_clip.half()
-        else:
-            image_clip = image_clip.float()
-
-        image = transform.apply_image(image_np)
+            image = cv2.imread(image_path)
+        # pdb.set_trace()
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image_np=image
+        original_size_list = [image.shape[:2]]
+        image=transform.apply_image(image)
         resize_list = [image.shape[:2]]
-
-        image = (
-            preprocess(torch.from_numpy(image).permute(2, 0, 1).contiguous())
-            .unsqueeze(0)
-            .cuda()
+        image = preprocess(torch.from_numpy(image).permute(2, 0, 1).contiguous())
+        # print('3',image.shape)# torch.Size([3, 1024, 1024])
+        pil_image=Image.fromarray((image.permute(1, 2, 0).numpy()*255).astype(np.uint8))
+        query=prompt+" {}".format(random.choice(EXPLANATORY_QUESTION_LIST))
+        conversation_prompt=[
+                    {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": query}]},
+                    {"role": "assistant", "content": ""}
+                ]
+        inputs=processer(
+            text=processer.tokenizer.apply_chat_template(conversation_prompt, tokenize=False),
+            images=pil_image,
+            return_tensors="pt",
+            padding=True
         )
-        if args.precision == "bf16":
-            image = image.bfloat16()
-        elif args.precision == "fp16":
-            image = image.half()
-        else:
-            image = image.float()
-
-        input_ids = tokenizer_image_token(prompt, tokenizer, return_tensors="pt")
-        input_ids = input_ids.unsqueeze(0).cuda()
+        
         # if input_ids.shape[1]==1:
         # import pdb; pdb.set_trace()
         output_ids, pred_masks = model.evaluate(
-            image_clip, # torch.Size([1, 3, 224, 224])
-            image, # torch.Size([1, 3, 1024, 1024])
-            input_ids, # torch.Size([1, 76])
-            resize_list, #[(689, 1024)]
-            original_size_list, # [(3230, 4800)]
+            images=image.unsqueeze(0).cuda(), # torch.Size([1, 3, 224, 224])
+            input_ids=inputs['input_ids'].unsqueeze(0).cuda(), # torch.Size([1, 76])
+            resize_list=resize_list, #[(689, 1024)]
+            original_size_list=original_size_list, # [(3230, 4800)]
             max_new_tokens=512,
-            tokenizer=tokenizer,
         )
         output_ids = output_ids[0][output_ids[0] != IMAGE_TOKEN_INDEX]
 
@@ -324,11 +284,8 @@ def main(args):
             cv2.imwrite(save_path, pred_mask * 100)
             print("{} has been saved.".format(save_path))
 
-            # make sure"{}/better" exists
-            if not os.path.exists("{}/better".format(args.vis_save_path)):
-                os.makedirs("{}/better".format(args.vis_save_path))
-            save_path = "{}/better/{}_{}_masked_img_{}.jpg".format(
-                args.vis_save_path,image_name, class_name, i
+            save_path = "{}/{}_masked_img_{}.jpg".format(
+                args.vis_save_path, class_name, i
             )
             save_img = image_np.copy()
             save_img[pred_mask] = (
@@ -339,10 +296,11 @@ def main(args):
             cv2.imwrite(save_path, save_img)
             print("{} has been saved.".format(save_path))
         return {"image": image_path, "prompt": prompt, "class": class_name, "answer": text_output.split('ASSISTANT: ')[-1]}
+    import json
     sample_dict = json.load(open(args.chat_json))
     result_json=[]
     for i in range(len(sample_dict)):
-        result=chat(sample_dict[i]["prompt"],sample_dict[i]["image"],sample_dict[i]["class"], sample_dict[i]['grpo_answer'])
+        result=chat(sample_dict[i]["prompt"],sample_dict[i]["image"],sample_dict[i]["class"])
         result_json.append(result)
     
     result_save_path = os.path.join(args.vis_save_path,args.chat_json.split("/")[-1])

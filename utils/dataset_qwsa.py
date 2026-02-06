@@ -138,13 +138,27 @@ class ReasonSegDatasetQWSA_EM(torch.utils.data.Dataset):
                     {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": query}]},
                     {"role": "assistant", "content": outputs}
                 ]
+            conversation_prompt=[
+                    {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": query}]},
+                    {"role": "assistant", "content": ""}
+                ]
         else:
             conversation = [
                     {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": query}]},
                     {"role": "assistant", "content": outputs} # qaq
                 ]
+            conversation_prompt=[
+                    {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": query}]},
+                    {"role": "assistant", "content": ""}
+                ]
         inputs=self.processer(
             text=self.processer.tokenizer.apply_chat_template(conversation, tokenize=False),
+            images=pil_image,
+            return_tensors="pt",
+            padding=True
+        )
+        prompts=self.processer(
+            text=self.processer.tokenizer.apply_chat_template(conversation_prompt, tokenize=False),
             images=pil_image,
             return_tensors="pt",
             padding=True
@@ -189,8 +203,10 @@ class ReasonSegDatasetQWSA_EM(torch.utils.data.Dataset):
             torch.ones(masks.shape[1], masks.shape[2]) * 255, # label_tensor
             resize,
             [query],
-            [query],
+            classes,
             inference,
+            ## new
+            conversation_prompt,
         )
 
 
@@ -231,12 +247,13 @@ def collate_fn_qwsa(
     offset_list = [0]
     cnt = 0
     inferences = []
+    prompt_messages_structured = []
     
     # 3. Collect raw data from valid batch
     if len(batch[0])==12:
         for (
             image_path, images, pil_image, messages, masks, label, resize,
-            questions, sampled_classes,_,_, inference
+            questions, sampled_classes,_,_, inference, prompt_messages
         ) in batch:
             image_path_list.append(image_path)
             images_list.append(images)
@@ -250,10 +267,11 @@ def collate_fn_qwsa(
             cnt += 1
             offset_list.append(cnt)
             inferences.append(inference)
+            prompt_messages_structured.append(prompt_messages)
     else:
         for (
             image_path, images, pil_image, messages, masks, label, resize,
-            questions, sampled_classes, inference
+            questions, sampled_classes, inference, prompt_messages
         ) in batch:
             image_path_list.append(image_path)
             images_list.append(images)
@@ -267,6 +285,7 @@ def collate_fn_qwsa(
             cnt += 1
             offset_list.append(cnt)
             inferences.append(inference)
+            prompt_messages_structured.append(prompt_messages)
     
     # 4. Use processor to handle text and images
     # For training, conversation includes answer. For validation, assistant's part is empty.
@@ -276,10 +295,22 @@ def collate_fn_qwsa(
         )
         for conversation in all_messages_structured
     ]
+    prompt_texts_for_processing = [
+        processor.tokenizer.apply_chat_template(
+            conversation, tokenize=False, add_generation_prompt=True
+        )
+        for conversation in prompt_messages_structured
+    ]
     
     # 5. Package the batch using processor
     inputs = processor(
         text=texts_for_processing,
+        images=pil_images,
+        return_tensors="pt",
+        padding=True
+    )
+    prompts=processor(
+        text=prompt_texts_for_processing,
         images=pil_images,
         return_tensors="pt",
         padding=True
@@ -290,6 +321,9 @@ def collate_fn_qwsa(
     attention_masks = inputs['attention_mask']
     images_clip = inputs['pixel_values']
     image_grid_thw = inputs.get('image_grid_thw')
+
+    prompt_ids=prompts['input_ids']
+    attention_masks_prompts = prompts['attention_mask']
     
     # 7. Create target tensor for 'labels' and mask padding
     targets = input_ids.clone()
@@ -310,7 +344,9 @@ def collate_fn_qwsa(
         # Auxiliary info, filtered before model call
         "image_paths": image_path_list,
         "questions_list": questions_list,
-        "sampled_classes_list": sampled_classes_list,
+        "classes_list": sampled_classes_list,
+        "prompt_ids": prompt_ids,
+        "attention_masks_prompts": attention_masks_prompts,
     }
     
     if image_grid_thw is not None:

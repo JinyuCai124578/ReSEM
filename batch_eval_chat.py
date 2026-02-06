@@ -10,7 +10,6 @@ from transformers import AutoTokenizer, BitsAndBytesConfig, CLIPImageProcessor
 
 from model.LISA import LISAForCausalLM
 from model.LISA_qwen import LISAQwenForCausalLM
-from model.LISA_qwsa import QWSAForCausalLM
 from model.llava.model.multimodal_encoder.siglip_encoder import SigLipVisionTower, SigLipImageProcessor
 from model.llava import conversation as conversation_lib
 from model.llava.mm_utils import tokenizer_image_token
@@ -19,15 +18,16 @@ from utils.utils import (DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN,
                          DEFAULT_IMAGE_TOKEN, IMAGE_TOKEN_INDEX, EXPLANATORY_QUESTION_LIST)
 import pdb
 import random
-from train_ds import validate
+from train_ds import validate, validate_text
 from tqdm import tqdm
 import gc
 import json
+import deepspeed
+from PIL import Image
 
 import traceback
 
 random.seed(42)
-
 
 def info(type, value, tb):
     traceback.print_exception(type, value, tb)
@@ -65,6 +65,12 @@ def parse_args(args):
     )
     parser.add_argument("--weight", default="", type=str, required=False)
     parser.add_argument("--chat_json", default="/home/caijinyu/LISA/chat_sample.json", type=str, required=False)
+    parser.add_argument("--dataset_dir", default='/mnt/shared-storage-user/caijinyu/data', type=str)
+    parser.add_argument("--reason_seg_data", default="organelle||plantorgan||cremi||material", type=str)
+    parser.add_argument("--use_gpt_qa", action="store_true", default=True)
+    parser.add_argument("--val_batch_size", default=1, type=int)
+    parser.add_argument("--workers", default=4, type=int)
+
     return parser.parse_args(args)
 
 
@@ -145,11 +151,7 @@ def main(args):
                 ),
             }
         )
-    if "qwenvl" in args.version:
-        model = QWSAForCausalLM.from_pretrained(
-            args.version, low_cpu_mem_usage=True, vision_tower=args.vision_tower, seg_token_idx=args.seg_token_idx, **kwargs
-        )
-    elif "qwen" in args.version:
+    if "qwen" in args.version:
         model = LISAQwenForCausalLM.from_pretrained(
             args.version, low_cpu_mem_usage=True, vision_tower=args.vision_tower, seg_token_idx=args.seg_token_idx, **kwargs
         )
@@ -162,14 +164,9 @@ def main(args):
     model.config.bos_token_id = tokenizer.bos_token_id
     model.config.pad_token_id = tokenizer.pad_token_id
 
-    if "qwenvl" in args.version:
-        pass
-    else:
-        model.get_model().initialize_vision_modules(model.get_model().config)
-        vision_tower = model.get_model().get_vision_tower()
-        vision_tower.to(dtype=torch_dtype)
-    
-
+    model.get_model().initialize_vision_modules(model.get_model().config)
+    vision_tower = model.get_model().get_vision_tower()
+    vision_tower.to(dtype=torch_dtype)
 
     if args.precision == "bf16":
         model = model.bfloat16().cuda()
@@ -178,7 +175,7 @@ def main(args):
     ):
         vision_tower = model.get_model().get_vision_tower()
         model.model.vision_tower = None
-        import deepspeed
+        
 
         model_engine = deepspeed.init_inference(
             model=model,
@@ -229,10 +226,52 @@ def main(args):
             del shard_state
             gc.collect()
             torch.cuda.empty_cache()
+
+    from utils.dataset import collate_fn_grpo, ValDataset_EM
+    from functools import partial
+    conversation_lib.default_conversation = conversation_lib.conv_templates[
+        args.conv_type
+    ]
+    val_dataset = ValDataset_EM(
+                args.dataset_dir,
+                tokenizer,
+                args.vision_tower,
+                args.reason_seg_data+"_val",
+                args.image_size,
+                use_gpt_qa=args.use_gpt_qa,
+            )
+    if val_dataset is not None:
+        assert args.val_batch_size == 1
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset,
+            batch_size=args.val_batch_size,
+            shuffle=False,
+            num_workers=args.workers,
+            pin_memory=False,
+            collate_fn=partial(
+                collate_fn_grpo,
+                tokenizer=tokenizer,
+                conv_type=args.conv_type,
+                use_mm_start_end=args.use_mm_start_end,
+                local_rank=args.local_rank,
+            ),
+        )
     
     model.eval()
+    # giou, ciou, text_metric = validate_text(val_loader, model, 0, None,tokenizer, args)
+    # print("GIoU: ", giou, ";CIoU: ", ciou, ";Text_metric: ", text_metric)
+    # metric_save_path=os.path.join(args.vis_save_path,'metric.json')
+    # with open(metric_save_path, 'w') as f:
+    #     json.dump({"GIoU": giou, "CIoU": ciou, "Text_metric": text_metric}, f, indent=4)
 
-    def chat(prompt,image_path,class_name, answer=''):
+    def chat(prompt,image_path,class_name,mask_path,color_id):
+        if "ceramic" in mask_path.lower() or "nanoparticle" in mask_path.lower():
+            gt_mask=np.array(Image.open(mask_path).convert('L'))==int(color_id) if color_id is not None \
+                    else np.array(Image.open(mask_path).convert('L'))!=0
+        else:
+            gt_mask=np.array(Image.open(mask_path))==int(color_id) if color_id is not None \
+                    else np.array(Image.open(mask_path))!=0
+    
         conv = conversation_lib.conv_templates[args.conv_type].copy()
         conv.messages = []
 
@@ -245,9 +284,8 @@ def main(args):
             prompt = prompt.replace(DEFAULT_IMAGE_TOKEN, replace_token)
 
         conv.append_message(conv.roles[0], prompt)
-        conv.append_message(conv.roles[1], answer)
+        conv.append_message(conv.roles[1], "")
         prompt = conv.get_prompt()
-        image_name=image_path.split('.')[0].split('/')[-1]
 
         if not os.path.exists(image_path):
             print("File not found in {}".format(image_path))
@@ -309,7 +347,8 @@ def main(args):
 
         text_output = tokenizer.decode(output_ids, skip_special_tokens=False)
         text_output = text_output.replace("\n", "").replace("  ", " ")
-        print("text_output: ", text_output)
+
+        f1=1.0 if class_name.replace("_", " ").lower() in text_output.lower() else 0.0
 
         for i, pred_mask in enumerate(pred_masks):
             if pred_mask.shape[0] == 0:
@@ -318,36 +357,58 @@ def main(args):
             pred_mask = pred_mask.detach().cpu().numpy()[0]
             pred_mask = pred_mask > 0
 
-            save_path = "{}/{}_mask_{}.jpg".format(
-                args.vis_save_path, class_name, i
-            )
-            cv2.imwrite(save_path, pred_mask * 100)
-            print("{} has been saved.".format(save_path))
+            intersection=np.sum(pred_mask * gt_mask)
+            union=np.sum(pred_mask) + np.sum(gt_mask)
+            iou=intersection / (union+1e-5)
 
-            # make sure"{}/better" exists
-            if not os.path.exists("{}/better".format(args.vis_save_path)):
-                os.makedirs("{}/better".format(args.vis_save_path))
-            save_path = "{}/better/{}_{}_masked_img_{}.jpg".format(
-                args.vis_save_path,image_name, class_name, i
-            )
-            save_img = image_np.copy()
-            save_img[pred_mask] = (
-                image_np * 0.5
-                + pred_mask[:, :, None].astype(np.uint8) * np.array([255, 0, 0]) * 0.5
-            )[pred_mask]
-            save_img = cv2.cvtColor(save_img, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(save_path, save_img)
-            print("{} has been saved.".format(save_path))
-        return {"image": image_path, "prompt": prompt, "class": class_name, "answer": text_output.split('ASSISTANT: ')[-1]}
-    sample_dict = json.load(open(args.chat_json))
-    result_json=[]
-    for i in range(len(sample_dict)):
-        result=chat(sample_dict[i]["prompt"],sample_dict[i]["image"],sample_dict[i]["class"], sample_dict[i]['grpo_answer'])
-        result_json.append(result)
+            # save_path = "{}/{}_mask_{}.jpg".format(
+            #     args.vis_save_path, class_name, i
+            # )
+            # cv2.imwrite(save_path, pred_mask * 100)
+            # print("{} has been saved.".format(save_path))
+
+            # save_path = "{}/{}_masked_img_{}.jpg".format(
+            #     args.vis_save_path, class_name, i
+            # )
+            # save_img = image_np.copy()
+            # save_img[pred_mask] = (
+            #     image_np * 0.5
+            #     + pred_mask[:, :, None].astype(np.uint8) * np.array([255, 0, 0]) * 0.5
+            # )[pred_mask]
+            # save_img = cv2.cvtColor(save_img, cv2.COLOR_RGB2BGR)
+            # cv2.imwrite(save_path, save_img)
+            # print("{} has been saved.".format(save_path))
+        return {"image": image_path, "prompt": prompt, "class": class_name, "answer": text_output.split('ASSISTANT: ')[-1], "f1": f1, "iou": iou}
     
-    result_save_path = os.path.join(args.vis_save_path,args.chat_json.split("/")[-1])
+    # sample_dict = json.load(open(args.chat_json))
+    # result_json=[]
+    # for i in range(len(sample_dict)):
+    #     result=chat(sample_dict[i]["prompt"],sample_dict[i]["image"],sample_dict[i]["class"])
+    #     result_json.append(result)
+    
+    # result_save_path = os.path.join(args.vis_save_path,args.chat_json.split("/")[-1])
+    # with open(result_save_path,"w") as f:
+    #     json.dump(result_json,f,indent=4)
+    val_data_list = val_dataset.json_data_list
+    result_json=[]
+    for item in tqdm(val_data_list):
+        image_path=item['image_path']
+        for shape in item['shapes']:
+            mask_path=image_path.replace(shape['image_name'],shape['mask_name'])
+            color_id=shape.get('color_id',None)
+            class_name=shape['class_name']
+            for qa in shape['qa_list']:
+                prompt=qa['question']
+                result=chat(prompt=prompt,
+                            image_path=image_path,
+                            class_name=class_name,
+                            mask_path=mask_path,
+                            color_id=color_id)
+                result_json.append(result)
+    result_save_path = os.path.join(args.vis_save_path,'all_eval_result.json')
     with open(result_save_path,"w") as f:
         json.dump(result_json,f,indent=4)
+
 
 if __name__ == "__main__":
     main(sys.argv[1:])
