@@ -38,7 +38,7 @@ sys.excepthook = info
 
 def parse_args(args):
     parser = argparse.ArgumentParser(description="LISA chat")
-    parser.add_argument("--version", default="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/cache/models--xinlai--LISA-13B-llama2-v1/snapshots/b89000be11ad0a45512745a15063f2f6af1d9a5c")
+    parser.add_argument("--version", default="xinlai/LISA-13B-llama2-v1")
     parser.add_argument("--vis_save_path", default="./vis_output", type=str)
     parser.add_argument(
         "--precision",
@@ -51,7 +51,7 @@ def parse_args(args):
     parser.add_argument("--model_max_length", default=512, type=int)
     parser.add_argument("--lora_r", default=8, type=int)
     parser.add_argument(
-        "--vision-tower", default="/mnt/shared-storage-user/caijinyu/model/models--openai--clip-vit-large-patch14/snapshots/32bd64288804d66eefd0ccbe215aa642df71cc41", type=str
+        "--vision-tower", default="openai/clip-vit-large-patch14", type=str
     )
     parser.add_argument("--local-rank", default=0, type=int, help="node rank")
     parser.add_argument("--load_in_8bit", action="store_true", default=False)
@@ -64,7 +64,7 @@ def parse_args(args):
         choices=["llava_v1", "llava_llama_2"],
     )
     parser.add_argument("--weight", default="", type=str, required=False)
-    parser.add_argument("--chat_json", default="/home/caijinyu/LISA/chat_sample.json", type=str, required=False)
+    parser.add_argument("--chat_json", default="chat_sample.json", type=str, required=False)
     return parser.parse_args(args)
 
 
@@ -95,7 +95,6 @@ def main(args):
     # Create model
     tokenizer = AutoTokenizer.from_pretrained(
         args.version,
-        cache_dir="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/lisa",
         model_max_length=args.model_max_length,
         padding_side="right",
         use_fast=False,
@@ -201,16 +200,6 @@ def main(args):
         
     transform = ResizeLongestSide(args.image_size)
 
-    # if args.weight != "" :
-    #     if "lora" in args.weight.lower():
-    #         state_dict = torch.load(args.weight, map_location="cpu")
-    #         model_dict = model.state_dict()
-    #         state_dict = {k: v for k, v in state_dict.items() if k in model_dict}
-    #         model.load_state_dict(state_dict, strict=False)
-    #         print("Loaded LORA weights")
-    #     else:
-    #         state_dict = torch.load(args.weight, map_location="cpu")
-    #         model.load_state_dict(torch.load(args.weight))
     if args.weight != "":
         index_file = os.path.join(args.weight, "pytorch_model.bin.index.json")
         with open(index_file, "r", encoding="utf-8") as f:
@@ -237,7 +226,6 @@ def main(args):
         conv.messages = []
 
         prompt = DEFAULT_IMAGE_TOKEN + "\n" + prompt + random.choice(EXPLANATORY_QUESTION_LIST)
-        # prompt = DEFAULT_IMAGE_TOKEN + "\n" + prompt # + random.choice(EXPLANATORY_QUESTION_LIST)
         if args.use_mm_start_end:
             replace_token = (
                 DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
@@ -324,10 +312,7 @@ def main(args):
             cv2.imwrite(save_path, pred_mask * 100)
             print("{} has been saved.".format(save_path))
 
-            # make sure"{}/better" exists
-            if not os.path.exists("{}/better".format(args.vis_save_path)):
-                os.makedirs("{}/better".format(args.vis_save_path))
-            save_path = "{}/better/{}_{}_masked_img_{}.jpg".format(
+            save_path = "{}/{}_{}_masked_img_{}.jpg".format(
                 args.vis_save_path,image_name, class_name, i
             )
             save_img = image_np.copy()
@@ -342,7 +327,7 @@ def main(args):
     sample_dict = json.load(open(args.chat_json))
     result_json=[]
     for i in range(len(sample_dict)):
-        result=chat(sample_dict[i]["prompt"],sample_dict[i]["image"],sample_dict[i]["class"], sample_dict[i]['grpo_answer'])
+        result=chat(sample_dict[i]["prompt"],sample_dict[i]["image"],sample_dict[i]["class"])
         result_json.append(result)
     
     result_save_path = os.path.join(args.vis_save_path,args.chat_json.split("/")[-1])

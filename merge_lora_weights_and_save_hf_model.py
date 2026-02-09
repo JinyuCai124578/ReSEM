@@ -33,12 +33,12 @@ def parse_args(args):
         choices=["fp32", "bf16", "fp16"],
         help="precision for inference",
     )
-    parser.add_argument("--vision_pretrained", default="/mnt/shared-storage-user/caijinyu/model/sam_vit_h_4b8939.pth", type=str)
+    parser.add_argument("--vision_pretrained", default="model/sam_vit_h_4b8939.pth", type=str)
     parser.add_argument("--out_dim", default=256, type=int)
     parser.add_argument("--image_size", default=1024, type=int, help="image size")
     parser.add_argument("--model_max_length", default=512, type=int)
     parser.add_argument(
-        "--vision-tower", default="/mnt/shared-storage-user/caijinyu/model/models--openai--clip-vit-large-patch14/snapshots/32bd64288804d66eefd0ccbe215aa642df71cc41", type=str
+        "--vision-tower", default="openai/clip-vit-large-patch14", type=str
     )
     parser.add_argument("--lora_r", default=8, type=int)
     parser.add_argument("--lora_alpha", default=16, type=int)
@@ -108,13 +108,11 @@ def main(args):
         model_args["vision_pretrained"] = args.vision_pretrained
         model=QWSAForCausalLM.from_pretrained(
         args.version,
-        # cache_dir="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/qwen",
         low_cpu_mem_usage=False, **model_args
     )
     elif "qwen" in args.version:
         model = LISAQwenForCausalLM.from_pretrained(
             args.version,
-            # cache_dir="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/qwen",
             torch_dtype=torch_dtype, low_cpu_mem_usage=True, **model_args
         )
     else:
@@ -181,7 +179,7 @@ def main(args):
         assert args.train_from_scratch == False, "train_from_scratch not supported when training mask decoder only"
     if not args.train_from_scratch:
         print("loading from pretrained")
-        lisa_params=torch.load('/mnt/shared-storage-user/caijinyu/model/lisa_params.pt', map_location='cuda')
+        lisa_params=torch.load('model/lisa_params.pt', map_location='cuda')
         for name, param in lisa_params.items():
             # print(name)
             name="base_model.model."+name

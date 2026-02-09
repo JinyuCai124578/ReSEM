@@ -29,7 +29,7 @@ from transformers.generation.utils import GenerateOutput
 # 获取 llava 目录的绝对路径
 import sys
 import os
-llava_path = os.path.abspath('/home/caijinyu/LISA/model')
+llava_path = os.path.abspath('ReSEM/model')
 # 将 llava 目录添加到 sys.path
 if llava_path not in sys.path:
     sys.path.insert(0, llava_path)

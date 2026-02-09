@@ -56,7 +56,7 @@ class ReferSegDataset(torch.utils.data.Dataset):
         self.refer_seg_data = {}
         for ds in self.refer_seg_ds_list:
             if ds=="plantorgan":
-                json_path="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/plantorgan/"+split+".json"
+                json_path="data/plantorgan/"+split+".json"
                 
         # for ds in self.refer_seg_ds_list:
         #     if ds == "refcocog":

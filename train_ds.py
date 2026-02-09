@@ -51,7 +51,7 @@ def parse_args(args):
     parser.add_argument("--model_max_length", default=512, type=int)
     parser.add_argument("--lora_r", default=8, type=int)
     parser.add_argument(
-        "--vision-tower", default="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/models--openai--clip-vit-large-patch14/snapshots/32bd64288804d66eefd0ccbe215aa642df71cc41", type=str
+        "--vision-tower", default="openai/clip-vit-large-patch14", type=str
     )
     parser.add_argument("--load_in_8bit", action="store_true", default=False)
     parser.add_argument("--load_in_4bit", action="store_true", default=False)
@@ -72,7 +72,7 @@ def parse_args(args):
     parser.add_argument("--reason_seg_data", default="ReasonSeg|train", type=str)
     parser.add_argument("--val_dataset", default="ReasonSeg|val", type=str)
     parser.add_argument("--dataset_dir", default="./dataset", type=str)
-    parser.add_argument("--log_base_dir", default="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/runs", type=str)
+    parser.add_argument("--log_base_dir", default="runs", type=str)
     parser.add_argument("--exp_name", default="lisa", type=str)
     parser.add_argument("--epochs", default=10, type=int)
     parser.add_argument("--steps_per_epoch", default=500, type=int)
@@ -147,7 +147,6 @@ def main(args):
     # Create model
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         args.version,
-        # cache_dir="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/lisa",
         model_max_length=args.model_max_length,
         padding_side="right",
         use_fast=False,
@@ -179,7 +178,6 @@ def main(args):
         torch_dtype = torch.half
     model = LISAForCausalLM.from_pretrained(
         args.version,
-        # cache_dir="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/lisa",
         torch_dtype=torch_dtype, low_cpu_mem_usage=True, **model_args
     )
     model.config.eos_token_id = tokenizer.eos_token_id
@@ -331,7 +329,7 @@ def main(args):
         assert args.train_from_scratch == False, "train_from_scratch not supported when training mask decoder only"
     if not args.train_from_scratch and not args.full_from_scratch:
         print("loading from pretrained")
-        lisa_params=torch.load('/mnt/shared-storage-user/caijinyu/model/lisa_params.pt')
+        lisa_params=torch.load('lisa_params.pt')
         for name, param in lisa_params.items():
             # print(name)
             name="base_model.model."+name

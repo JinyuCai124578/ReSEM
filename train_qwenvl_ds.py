@@ -16,8 +16,10 @@ from torch.utils.tensorboard import SummaryWriter
 
 from model.LISA import LISAForCausalLM
 from model.LISA_qwen import LISAQwenForCausalLM
+from model.LISA_qwsa import QWSAForCausalLM
 from model.llava import conversation as conversation_lib
 from utils.dataset import HybridDataset, ValDataset, collate_fn , ValDataset_EM
+from utils.dataset_qwsa import ReasonSegDatasetQWSA_EM, collate_fn_qwsa
 from utils.utils import (DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN,
                          AverageMeter, ProgressMeter, Summary, dict_to_cuda,
                          intersectionAndUnionGPU)
@@ -37,7 +39,7 @@ def parse_args(args):
     parser = argparse.ArgumentParser(description="LISA Model Training")
     parser.add_argument("--local_rank", default=0, type=int, help="node rank")
     parser.add_argument(
-        "--version", default="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/models--lmms-lab--llava-onevision-qwen2-7b-ov-chat/snapshots/3e979daa252a57fe1fdc4b0f537bf03d9d062031"
+        "--version", default="Qwen/Qwen2.5-VL-7B-Instruct"
     )
     parser.add_argument("--vis_save_path", default="./vis_output", type=str)
     parser.add_argument(
@@ -48,10 +50,10 @@ def parse_args(args):
         help="precision for inference",
     )
     parser.add_argument("--image_size", default=1024, type=int, help="image size")
-    parser.add_argument("--model_max_length", default=512, type=int)
+    parser.add_argument("--model_max_length", default=1550, type=int)
     parser.add_argument("--lora_r", default=8, type=int)
     parser.add_argument(
-        "--vision-tower", default="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/models--google--siglip-so400m-patch14-384/snapshots/9fdffc58afc957d1a03a25b10dba0329ab15c2a3", type=str
+        "--vision-tower", default="google/siglip-so400m-patch14-384", type=str
     )
     parser.add_argument("--load_in_8bit", action="store_true", default=False)
     parser.add_argument("--load_in_4bit", action="store_true", default=False)
@@ -71,8 +73,8 @@ def parse_args(args):
     parser.add_argument("--vqa_data", default="llava_instruct_150k", type=str)
     parser.add_argument("--reason_seg_data", default="ReasonSeg|train", type=str)
     parser.add_argument("--val_dataset", default="ReasonSeg|val", type=str)
-    parser.add_argument("--dataset_dir", default="./dataset", type=str)
-    parser.add_argument("--log_base_dir", default="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/runs", type=str)
+    parser.add_argument("--dataset_dir", default="data", type=str)
+    parser.add_argument("--log_base_dir", default="runs", type=str)
     parser.add_argument("--exp_name", default="lisa", type=str)
     parser.add_argument("--epochs", default=10, type=int)
     parser.add_argument("--steps_per_epoch", default=500, type=int)
@@ -134,7 +136,6 @@ def main(args):
     # Create model
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         args.version,
-        # cache_dir="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/lisa",
         model_max_length=args.model_max_length,
         padding_side="right",
         use_fast=False,
@@ -158,27 +159,34 @@ def main(args):
             [DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN], special_tokens=True
         )
 
-    model_args = {
-        "train_mask_decoder": args.train_mask_decoder,
-        "out_dim": args.out_dim,
-        "ce_loss_weight": args.ce_loss_weight,
-        "dice_loss_weight": args.dice_loss_weight,
-        "bce_loss_weight": args.bce_loss_weight,
-        "seg_token_idx": args.seg_token_idx,
-        "vision_pretrained": args.vision_pretrained,
-        "vision_tower": args.vision_tower,
-        "use_mm_start_end": args.use_mm_start_end,
-    }
+    processer=transformers.AutoProcessor.from_pretrained(args.version, trust_remote_code=True)
+    processer.tokenizer = tokenizer
+
     torch_dtype = torch.float32
     if args.precision == "bf16":
         torch_dtype = torch.bfloat16
     elif args.precision == "fp16":
         torch_dtype = torch.half
-    model = LISAQwenForCausalLM.from_pretrained(
+
+    model_args = {
+        "train_mask_decoder": args.train_mask_decoder, 
+        "out_dim": args.out_dim, 
+        "ce_loss_weight": args.ce_loss_weight,
+        "dice_loss_weight": args.dice_loss_weight,
+        "bce_loss_weight": args.bce_loss_weight,
+        "seg_token_idx": args.seg_token_idx, 
+        "vision_pretrained": args.vision_pretrained, 
+        "image_size": args.image_size, 
+        "torch_dtype": torch_dtype,
+        "vision_tower": args.vision_tower,
+        "use_mm_start_end": args.use_mm_start_end,
+    }
+    
+    model = QWSAForCausalLM.from_pretrained(
         args.version,
-        # cache_dir="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/qwen",
-        torch_dtype=torch_dtype, low_cpu_mem_usage=True, **model_args
+        low_cpu_mem_usage=False, **model_args
     )
+    model.initialize_lisa_modules()
     model.config.eos_token_id = tokenizer.eos_token_id
     model.config.bos_token_id = tokenizer.bos_token_id
     model.config.pad_token_id = tokenizer.pad_token_id
@@ -186,16 +194,16 @@ def main(args):
     model.enable_input_require_grads()
     model.gradient_checkpointing_enable()
 
-    model.get_model().initialize_vision_modules(model.get_model().config)
-    vision_tower = model.get_model().get_vision_tower()
-    vision_tower.to(dtype=torch_dtype, device=args.local_rank)
-    if not args.eval_only:
-        model.get_model().initialize_lisa_modules(model.get_model().config)
+    # model.get_model().initialize_vision_modules(model.get_model().config)
+    # vision_tower = model.get_model().get_vision_tower()
+    # vision_tower.to(dtype=torch_dtype, device=args.local_rank)
+    # if not args.eval_only:
+    #     model.get_model().initialize_lisa_modules(model.get_model().config)
 
-    for p in vision_tower.parameters():
-        p.requires_grad = False
-    for p in model.get_model().mm_projector.parameters():
-        p.requires_grad = False
+    # for p in vision_tower.parameters():
+    #     p.requires_grad = False
+    # for p in model.get_model().mm_projector.parameters():
+    #     p.requires_grad = False
 
     conversation_lib.default_conversation = conversation_lib.conv_templates[
         args.conv_type
@@ -257,7 +265,7 @@ def main(args):
                     for x in trainable_params
                 ]
             ):
-                print("n: ", n, "p.shape: ", p.shape)
+                # print("n: ", n, "p.shape: ", p.shape)
                 p.requires_grad = True
     elif args.full_finetune:
         for n, p in model.named_parameters():
@@ -271,65 +279,54 @@ def main(args):
                     for x in trainable_params
                 ]
             ):
-                print("n: ", n, "p.shape: ", p.shape)
+                # print("n: ", n, "p.shape: ", p.shape)
                 p.requires_grad = True
     # pdb.set_trace()
     if args.train_mask_decoder_only:
         assert args.train_from_scratch == False, "train_from_scratch not supported when training mask decoder only"
-    if not args.train_from_scratch:
-        print("loading from pretrained")
-        lisa_params=torch.load('lisa_params.pt')
-        for name, param in lisa_params.items():
-            # print(name)
-            name="base_model.model."+name
-            # pdb.set_trace()
-            if name in model.state_dict():
-                # print("load {}".format(name))
-                model.state_dict()[name].copy_(param)
-        del lisa_params
+    # if not args.train_from_scratch:
+    #     print("loading from pretrained")
+    #     lisa_params=torch.load('lisa_params.pt')
+    #     for name, param in lisa_params.items():
+    #         # print(name)
+    #         name="base_model.model."+name
+    #         # pdb.set_trace()
+    #         if name in model.state_dict():
+    #             # print("load {}".format(name))
+    #             model.state_dict()[name].copy_(param)
+    #     del lisa_params
 
     world_size = torch.cuda.device_count()
     args.distributed = world_size > 1
-    train_dataset = HybridDataset(
-        args.dataset_dir,
-        tokenizer,
-        args.vision_tower,
+    train_dataset = ReasonSegDatasetQWSA_EM(
+        base_data_dir=args.dataset_dir,
+        tokenizer=tokenizer,
+        processer=processer,
+        precision=args.precision,
         samples_per_epoch=args.batch_size
         * args.grad_accumulation_steps
         * args.steps_per_epoch
         * world_size,
-        precision=args.precision,
         image_size=args.image_size,
         num_classes_per_sample=args.num_classes_per_sample,
         exclude_val=args.exclude_val,
-        dataset=args.dataset,
-        sample_rate=[float(x) for x in args.sample_rates.split(",")],
-        sem_seg_data=args.sem_seg_data,
-        refer_seg_data=args.refer_seg_data,
-        vqa_data=args.vqa_data,
-        reason_seg_data=args.reason_seg_data,
+        reason_seg_data=args.reason_seg_data+"_train",
         explanatory=args.explanatory,
         use_gpt_qa=args.use_gpt_qa,
     )
-
     if args.no_eval == False:
-        if args.val_dataset == "reason_seg_em":
-            val_dataset = ValDataset_EM(
-                args.dataset_dir,
-                tokenizer,
-                args.vision_tower,
-                args.reason_seg_data+"_val",
-                args.image_size,
-                use_gpt_qa=args.use_gpt_qa,
-            )
-        else:
-            val_dataset = ValDataset(
-                args.dataset_dir,
-                tokenizer,
-                args.vision_tower,
-                args.val_dataset,
-                args.image_size,
-            )
+        val_dataset = ReasonSegDatasetQWSA_EM(
+            base_data_dir=args.dataset_dir,
+            tokenizer=tokenizer,
+            processer=processer,
+            precision=args.precision,
+            image_size=args.image_size,
+            num_classes_per_sample=args.num_classes_per_sample,
+            exclude_val=args.exclude_val,
+            reason_seg_data=args.reason_seg_data+"_val",
+            explanatory=args.explanatory,
+            use_gpt_qa=args.use_gpt_qa,
+        )
         print(
             f"Training with {len(train_dataset)} examples and validating with {len(val_dataset)} examples."
         )
@@ -394,12 +391,13 @@ def main(args):
         model_parameters=model.parameters(),
         training_data=train_dataset,
         collate_fn=partial(
-            collate_fn,
-            tokenizer=tokenizer,
-            conv_type=args.conv_type,
-            use_mm_start_end=args.use_mm_start_end,
-            local_rank=args.local_rank,
-        ),
+                collate_fn_qwsa,
+                tokenizer=tokenizer,
+                conv_type=args.conv_type,
+                use_mm_start_end=args.use_mm_start_end,
+                local_rank=args.local_rank,
+                processor=processer,
+            ),
         config=ds_config,
     )
 
@@ -436,11 +434,12 @@ def main(args):
             pin_memory=False,
             sampler=val_sampler,
             collate_fn=partial(
-                collate_fn,
+                collate_fn_qwsa,
                 tokenizer=tokenizer,
                 conv_type=args.conv_type,
                 use_mm_start_end=args.use_mm_start_end,
                 local_rank=args.local_rank,
+                processor=processer,
             ),
         )
 
@@ -533,15 +532,15 @@ def train(
             data_time.update(time.time() - end)
             input_dict = dict_to_cuda(input_dict)
 
-            if args.precision == "fp16":
-                input_dict["images"] = input_dict["images"].half()
-                input_dict["images_clip"] = input_dict["images_clip"].half()
-            elif args.precision == "bf16":
-                input_dict["images"] = input_dict["images"].bfloat16()
-                input_dict["images_clip"] = input_dict["images_clip"].bfloat16()
-            else:
-                input_dict["images"] = input_dict["images"].float()
-                input_dict["images_clip"] = input_dict["images_clip"].float()
+            # if args.precision == "fp16":
+            #     input_dict["images"] = input_dict["images"].half()
+            #     input_dict["pixel_values"] = input_dict["pixel_values"].half()
+            # elif args.precision == "bf16":
+            #     input_dict["images"] = input_dict["images"].bfloat16()
+            #     input_dict["pixel_values"] = input_dict["pixel_values"].bfloat16()
+            # else:
+            #     input_dict["images"] = input_dict["images"].float()
+            #     input_dict["pixel_values"] = input_dict["pixel_values"].float()
 
             output_dict = model(**input_dict)
 
@@ -558,6 +557,7 @@ def train(
             mask_losses.update(mask_loss.item(), input_dict["images"].size(0))
             model.backward(loss)
             model.step()
+            torch.cuda.empty_cache() 
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -617,17 +617,17 @@ def validate(val_loader, model_engine, epoch, writer, args):
 
     for input_dict in tqdm.tqdm(val_loader):
         torch.cuda.empty_cache()
-
+        assert input_dict['inference']==True, f"inference should be set to True for validation instead of {input_dict['inference']}"
         input_dict = dict_to_cuda(input_dict)
-        if args.precision == "fp16":
-            input_dict["images"] = input_dict["images"].half()
-            input_dict["images_clip"] = input_dict["images_clip"].half()
-        elif args.precision == "bf16":
-            input_dict["images"] = input_dict["images"].bfloat16()
-            input_dict["images_clip"] = input_dict["images_clip"].bfloat16()
-        else:
-            input_dict["images"] = input_dict["images"].float()
-            input_dict["images_clip"] = input_dict["images_clip"].float()
+        # if args.precision == "fp16":
+        #     input_dict["images"] = input_dict["images"].half()
+        #     input_dict["images_clip"] = input_dict["images_clip"].half()
+        # elif args.precision == "bf16":
+        #     input_dict["images"] = input_dict["images"].bfloat16()
+        #     input_dict["images_clip"] = input_dict["images_clip"].bfloat16()
+        # else:
+        #     input_dict["images"] = input_dict["images"].float()
+        #     input_dict["images_clip"] = input_dict["images_clip"].float()
 
         with torch.no_grad():
             output_dict = model_engine(**input_dict)

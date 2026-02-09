@@ -30,7 +30,7 @@ class ReasonSegDataset_EM(torch.utils.data.Dataset):
 
     def __init__(
         self,
-        base_data_dir="/mnt/shared-storage-user/ai4sdata2-share/caijinyu/data",
+        base_data_dir="data",
         tokenizer=None,
         vision_tower=None,
         samples_per_epoch=500 * 8 * 2 * 10,

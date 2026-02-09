@@ -27,10 +27,10 @@ from transformers import BitsAndBytesConfig, AutoTokenizer
 from peft import LoraConfig, get_peft_model
 from torch.utils.tensorboard import SummaryWriter
 
-from model.LISA import LISAForCausalLM
-from model.LISA_qwen import LISAQwenForCausalLM
+
+from model.LISA_qwsa import QWSAForCausalLM
 from model.llava import conversation as conversation_lib
-from utils.dataset import HybridDataset, ValDataset, collate_fn_grpo, ValDataset_EM
+from utils.dataset_qwsa import ReasonSegDatasetQWSA_EM, collate_fn_qwsa
 from utils.utils import (DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN, IMAGE_TOKEN_INDEX, 
                          AverageMeter, ProgressMeter, Summary, dict_to_cuda,
                          intersectionAndUnionGPU, evaluate_text_metrics)
@@ -38,7 +38,7 @@ import pdb
 import traceback
 import torch.nn as nn
 
-from model.grpo.data_parallel_ds import train_with_grpo, train_with_grpo_epoch
+from model.grpo.data_parallel_ds_qwsa import train_with_grpo, train_with_grpo_epoch
 from model.grpo.utils import optimize_model_memory
 from model.grpo.reward import combined_reward
 import copy
@@ -77,10 +77,10 @@ def parse_args(args):
         help="precision for inference",
     )
     parser.add_argument("--image_size", default=1024, type=int, help="image size")
-    parser.add_argument("--model_max_length", default=512, type=int)
+    parser.add_argument("--model_max_length", default=1550, type=int)
     parser.add_argument("--lora_r", default=8, type=int)
     parser.add_argument(
-        "--vision-tower", default="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/models--openai--clip-vit-large-patch14/snapshots/32bd64288804d66eefd0ccbe215aa642df71cc41", type=str
+        "--vision-tower", default="openai/clip-vit-large-patch14", type=str
     )
     parser.add_argument("--load_in_8bit", action="store_true", default=False)
     parser.add_argument("--load_in_4bit", action="store_true", default=False)
@@ -101,7 +101,7 @@ def parse_args(args):
     parser.add_argument("--reason_seg_data", default="ReasonSeg|train", type=str)
     parser.add_argument("--val_dataset", default="ReasonSeg|val", type=str)
     parser.add_argument("--dataset_dir", default="./dataset", type=str)
-    parser.add_argument("--log_base_dir", default="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/runs", type=str)
+    parser.add_argument("--log_base_dir", default="runs", type=str)
     parser.add_argument("--exp_name", default="lisa", type=str)
     parser.add_argument("--epochs", default=10, type=int)
     parser.add_argument("--steps_per_epoch", default=500, type=int)
@@ -177,7 +177,6 @@ def main(args):
     # Create model
     tokenizer = AutoTokenizer.from_pretrained(
         args.version,
-        cache_dir="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/lisa",
         model_max_length=args.model_max_length,
         padding_side="right",
         use_fast=False,
@@ -192,9 +191,16 @@ def main(args):
     if tokenizer.pad_token not in tokenizer.get_vocab():
         tokenizer.add_special_tokens({"pad_token": tokenizer.pad_token})
 
-    tokenizer.pad_token = tokenizer.unk_token
+    tokenizer.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
+    num_added_tokens = tokenizer.add_tokens("[SEG]")
     args.seg_token_idx = tokenizer("[SEG]", add_special_tokens=False).input_ids[0]
+    if args.use_mm_start_end:
+        tokenizer.add_tokens(
+            [DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN], special_tokens=True
+        )
 
+    processer=transformers.AutoProcessor.from_pretrained(args.version, trust_remote_code=True)
+    processer.tokenizer = tokenizer
 
     torch_dtype = torch.float32
     if args.precision == "bf16":
@@ -202,44 +208,22 @@ def main(args):
     elif args.precision == "fp16":
         torch_dtype = torch.half
 
-    kwargs = {
-        "train_mask_decoder": args.train_mask_decoder,
-        "out_dim": args.out_dim,
+    model_args = {
+        "train_mask_decoder": args.train_mask_decoder, 
+        "out_dim": args.out_dim, 
         "ce_loss_weight": args.ce_loss_weight,
         "dice_loss_weight": args.dice_loss_weight,
         "bce_loss_weight": args.bce_loss_weight,
-        "seg_token_idx": args.seg_token_idx,
-        "vision_pretrained": args.vision_pretrained,
+        "seg_token_idx": args.seg_token_idx, 
+        "vision_pretrained": args.vision_pretrained, 
+        "image_size": args.image_size, 
+        "torch_dtype": torch_dtype,
         "vision_tower": args.vision_tower,
         "use_mm_start_end": args.use_mm_start_end,
-        "torch_dtype": torch_dtype
     }
-    # if args.load_in_4bit:
-    #     kwargs.update(
-    #         {
-    #             "torch_dtype": torch.half,
-    #             "load_in_4bit": True,
-    #             "quantization_config": BitsAndBytesConfig(
-    #                 load_in_4bit=True,
-    #                 bnb_4bit_compute_dtype=torch.float16,
-    #                 bnb_4bit_use_double_quant=True,
-    #                 bnb_4bit_quant_type="nf4",
-    #                 llm_int8_skip_modules=["visual_model"],
-    #             ),
-    #         }
-    #     )
-    # elif args.load_in_8bit:
-    #     kwargs.update(
-    #         {
-    #             "torch_dtype": torch.half,
-    #             "quantization_config": BitsAndBytesConfig(
-    #                 llm_int8_skip_modules=["visual_model"],
-    #                 load_in_8bit=True,
-    #             ),
-    #         }
-    #     )
-    model = LISAQwenForCausalLM.from_pretrained(
-        args.version, low_cpu_mem_usage=True, **kwargs
+    model = QWSAForCausalLM.from_pretrained(
+        args.version,
+        low_cpu_mem_usage=False, **model_args
     )
 
     model.config.eos_token_id = tokenizer.eos_token_id
@@ -247,28 +231,6 @@ def main(args):
     model.config.pad_token_id = tokenizer.pad_token_id
 
     model.gradient_checkpointing_enable()
-
-    model.get_model().initialize_vision_modules(model.get_model().config)
-    vision_tower = model.get_model().get_vision_tower()
-    vision_tower.to(dtype=torch_dtype, device=args.local_rank)
-
-    # if args.precision == "bf16":
-    #     model = model.bfloat16().cuda()
-    # elif (
-    #     args.precision == "fp16" and (not args.load_in_4bit) and (not args.load_in_8bit)
-    # ):
-    #     vision_tower = model.get_model().get_vision_tower()
-    #     model.model.vision_tower = None
-    #     model_engine = deepspeed.init_inference(
-    #         model=model,
-    #         dtype=torch.half,
-    #         replace_with_kernel_inject=True,
-    #         replace_method="auto",
-    #     )
-    #     model = model_engine.module
-    #     model.model.vision_tower = vision_tower.half().cuda()
-    # elif args.precision == "fp32":
-    #     model = model.float().cuda()
 
     conversation_lib.default_conversation = conversation_lib.conv_templates[
         args.conv_type
@@ -348,21 +310,7 @@ def main(args):
             ):
                 # print("n: ", n, "p.shape: ", p.shape)
                 p.requires_grad = True
-    # pdb.set_trace()
-    # if args.train_mask_decoder_only:
-    #     assert args.train_from_scratch == False, "train_from_scratch not supported when training mask decoder only"
-    # if not args.train_from_scratch and not args.full_from_scratch:
-    #     print("loading from pretrained")
-    #     lisa_params=torch.load('/mnt/shared-storage-user/caijinyu/model/lisa_params.pt')
-    #     for name, param in lisa_params.items():
-    #         # print(name)
-    #         name="base_model.model."+name
-    #         # pdb.set_trace()
-    #         if name in model.state_dict():
-    #             # print("load {}".format(name))
-    #             model.state_dict()[name].copy_(param)
-    #     del lisa_params
-    # print all trainable parameters
+
     print_rank0("##########")
     for name, param in model.named_parameters():
         if param.requires_grad:
@@ -370,46 +318,36 @@ def main(args):
 
     world_size = torch.cuda.device_count()
     args.distributed = world_size > 1
-    train_dataset = HybridDataset(
-        args.dataset_dir,
-        tokenizer,
-        args.vision_tower,
+    train_dataset = ReasonSegDatasetQWSA_EM(
+        base_data_dir=args.dataset_dir,
+        tokenizer=tokenizer,
+        processer=processer,
+        precision=args.precision,
         samples_per_epoch=args.batch_size
         * args.grad_accumulation_steps
         * args.steps_per_epoch
         * world_size,
-        precision=args.precision,
         image_size=args.image_size,
         num_classes_per_sample=args.num_classes_per_sample,
         exclude_val=args.exclude_val,
-        dataset=args.dataset,
-        sample_rate=[float(x) for x in args.sample_rates.split(",")],
-        sem_seg_data=args.sem_seg_data,
-        refer_seg_data=args.refer_seg_data,
-        vqa_data=args.vqa_data,
-        reason_seg_data=args.reason_seg_data,
+        reason_seg_data=args.reason_seg_data+"_train",
         explanatory=args.explanatory,
         use_gpt_qa=args.use_gpt_qa,
     )
 
     if args.no_eval == False:
-        if args.val_dataset == "reason_seg_em":
-            val_dataset = ValDataset_EM(
-                args.dataset_dir,
-                tokenizer,
-                args.vision_tower,
-                args.reason_seg_data+"_val",
-                args.image_size,
-                use_gpt_qa=args.use_gpt_qa,
-            )
-        else:
-            val_dataset = ValDataset(
-                args.dataset_dir,
-                tokenizer,
-                args.vision_tower,
-                args.val_dataset,
-                args.image_size,
-            )
+        val_dataset = ReasonSegDatasetQWSA_EM(
+            base_data_dir=args.dataset_dir,
+            tokenizer=tokenizer,
+            processer=processer,
+            precision=args.precision,
+            image_size=args.image_size,
+            num_classes_per_sample=args.num_classes_per_sample,
+            exclude_val=args.exclude_val,
+            reason_seg_data=args.reason_seg_data+"_val",
+            explanatory=args.explanatory,
+            use_gpt_qa=args.use_gpt_qa,
+        )
         print_rank0(
             f"Training with {len(train_dataset)} examples and validating with {len(val_dataset)} examples."
         )
@@ -463,12 +401,13 @@ def main(args):
         model_parameters=model.parameters(),
         training_data=train_dataset,
         collate_fn=partial(
-            collate_fn_grpo,
-            tokenizer=tokenizer,
-            conv_type=args.conv_type,
-            use_mm_start_end=args.use_mm_start_end,
-            local_rank=args.local_rank,
-        ),
+                collate_fn_qwsa,
+                tokenizer=tokenizer,
+                conv_type=args.conv_type,
+                use_mm_start_end=args.use_mm_start_end,
+                local_rank=args.local_rank,
+                processor=processer,
+            ),
         config=ds_config,
     )
     train_iter = iter(train_loader)
@@ -514,27 +453,26 @@ def main(args):
             pin_memory=False,
             sampler=val_sampler,
             collate_fn=partial(
-                collate_fn_grpo,
+                collate_fn_qwsa,
                 tokenizer=tokenizer,
                 conv_type=args.conv_type,
                 use_mm_start_end=args.use_mm_start_end,
                 local_rank=args.local_rank,
+                processor=processer,
             ),
         )
 
 
-    if False:
-        if args.score_text:
-            # import pdb; pdb.set_trace()
-            giou, ciou, text_metrics = validate_text(val_loader, model_engine, 0, writer, tokenizer, args)
-            # print(giou,ciou,text_metrics)
-        else:
-            giou, ciou = validate(val_loader, model_engine, 0, writer, args)
-        best_score=giou
-        cur_ciou=ciou
-    else:
-        best_score=0.5929
-        cur_ciou=0.6460
+    # if args.score_text:
+    #     # import pdb; pdb.set_trace()
+    #     giou, ciou, text_metrics = validate_text(val_loader, model_engine, 0, writer, tokenizer, args)
+    #     # print(giou,ciou,text_metrics)
+    # else:
+    #     giou, ciou = validate(val_loader, model_engine, 0, writer, args)
+    # best_score=giou
+    # cur_ciou=ciou
+    best_score= 0.5267
+    cur_ciou= 0.6029
     torch.cuda.empty_cache()
     print_rank0("\nStarting RL fine-tuning using GRPO...")
     # This config was tested on a 8xA100 node, where each A100 is has 80GB of VRAM
@@ -630,15 +568,15 @@ def validate(val_loader, model_engine, epoch, writer, args):
         torch.cuda.empty_cache()
 
         input_dict = dict_to_cuda(input_dict)
-        if args.precision == "fp16":
-            input_dict["images"] = input_dict["images"].half()
-            input_dict["images_clip"] = input_dict["images_clip"].half()
-        elif args.precision == "bf16":
-            input_dict["images"] = input_dict["images"].bfloat16()
-            input_dict["images_clip"] = input_dict["images_clip"].bfloat16()
-        else:
-            input_dict["images"] = input_dict["images"].float()
-            input_dict["images_clip"] = input_dict["images_clip"].float()
+        # if args.precision == "fp16":
+        #     input_dict["images"] = input_dict["images"].half()
+        #     input_dict["images_clip"] = input_dict["images_clip"].half()
+        # elif args.precision == "bf16":
+        #     input_dict["images"] = input_dict["images"].bfloat16()
+        #     input_dict["images_clip"] = input_dict["images_clip"].bfloat16()
+        # else:
+        #     input_dict["images"] = input_dict["images"].float()
+        #     input_dict["images_clip"] = input_dict["images_clip"].float()
 
         with torch.no_grad():
             output_dict = model_engine(**input_dict)

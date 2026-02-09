@@ -17,7 +17,7 @@ from utils.utils import (DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN,
 import random
 def parse_args(args):
     parser = argparse.ArgumentParser(description="LISA chat")
-    parser.add_argument("--version", default="/mnt/shared-storage-user/ai4sdata2-share/caijinyu/runs/lisa-em-qa-lora-lr1e-5")
+    parser.add_argument("--version", default="runs/lisa-em-qa-lora-lr1e-5")
     parser.add_argument("--vis_save_path", default="./vis_output", type=str)
     parser.add_argument(
         "--precision",
@@ -30,7 +30,7 @@ def parse_args(args):
     parser.add_argument("--model_max_length", default=512, type=int)
     parser.add_argument("--lora_r", default=8, type=int)
     parser.add_argument(
-        "--vision-tower", default="/mnt/shared-storage-user/caijinyu/model/models--openai--clip-vit-large-patch14/snapshots/32bd64288804d66eefd0ccbe215aa642df71cc41", type=str
+        "--vision-tower", default="openai/clip-vit-large-patch14", type=str
     )
     parser.add_argument("--local-rank", default=0, type=int, help="node rank")
     parser.add_argument("--load_in_8bit", action="store_true", default=False)
@@ -72,7 +72,6 @@ def main(args):
     # Create model
     tokenizer = AutoTokenizer.from_pretrained(
         args.version,
-        cache_dir="/home/bingxing2/ailab/group/ai4neuro/EM_segmentation/model/lisa",
         model_max_length=args.model_max_length,
         padding_side="right",
         use_fast=False,

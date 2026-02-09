@@ -245,7 +245,7 @@ def calculate_bertscore(candidates, references, lang="en"):
         tuple: (精确率, 召回率, F1)
     """
     P, R, F1 = bert_score(candidates, references, lang=lang , 
-                            model_type="/mnt/shared-storage-user/caijinyu/model/models--roberta-large/snapshots/722cf37b1afa9454edce342e7895e588b6ff1d59/",
+                            model_type="roberta-large",
                             num_layers=17)
     return P.mean().item(), R.mean().item(), F1.mean().item()
 

@@ -27,7 +27,7 @@ from utils.utils import (DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN,
 
 import sys
 import os
-llava_path = os.path.abspath('/home/caijinyu/LISA/model')
+llava_path = os.path.abspath('ReSEM/model')
 # 将 llava 目录添加到 sys.path
 if llava_path not in sys.path:
     sys.path.insert(0, llava_path)
