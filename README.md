@@ -3,12 +3,14 @@
 <font size=7><div align='center'><b>ReSEM</b>: Knowledge-Grounded <b>Re</b>asoning <b>S</b>egmentation for <b>E</b>lectron <b>M</b>icroscopy</div></font>
 
 <font size=7><div align='center'>
-    <a href="https://arxiv.org/pdf/2308.00692.pdf"><strong>Paper</strong></a> | 
-    <a href="https://huggingface.co/xinlai"><strong>Models</strong></a> | 
-    <a href="#training"><strong>Training</strong></a> | 
-    <a href="#inference"><strong>Inference</strong></a> | 
-    <a href="#dataset"><strong>Dataset</strong></a> | 
+    <a href="https://arxiv.org/pdf/2308.00692.pdf"><strong>📄 Paper</strong></a> | 
+    <a href="https://huggingface.co/cjyhgface"><strong>🤗 Models</strong></a> | 
+    <a href="#training"><strong>🛠️ Training</strong></a> | 
+    <a href="#inference"><strong>🔍 Inference</strong></a> | 
+    <a href="#dataset"><strong>🗂️ Dataset</strong></a>
 </div></font>
+
+ReSEM is a knowledge-grounded reasoning segmentation framework for electron microscopy images. It is designed to understand natural-language scientific queries, identify the relevant microscopic structures or material regions, produce precise segmentation masks, and provide explanatory responses grounded in domain knowledge. The project includes model checkpoints, training and inference scripts, and the ReasonEM dataset for building EM segmentation models with stronger reasoning and instruction-following abilities.
 
 <!-- <p align="center"> <img src="imgs/teaser.jpg" width="100%"> </p> -->
 
@@ -62,38 +64,11 @@
 
 <!-- <p align="center"> <img src="imgs/fig_overview.jpg" width="100%"> </p> -->
 
-<!-- ## News
-- [x] [2024.12.30] We released the [LISA++](https://arxiv.org/abs/2312.17240) model and datasets, available [here](https://huggingface.co/collections/Senqiao/lisa-67713837a32d6abf516a162e). Our findings show that incorporating Visual COT data can further enhance the model’s global understanding. We will update the paper soon, stay tuned!
-- [x] [2024.6.21] LISA is selected as Oral Presentation in CVPR 2024!
-- [x] [2023.8.30] Release three new models [LISA-7B-v1](https://huggingface.co/xinlai/LISA-7B-v1), [LISA-7B-v1-explanatory](https://huggingface.co/xinlai/LISA-7B-v1-explanatory), and [LISA-13B-llama2-v1-explanatory](https://huggingface.co/xinlai/LISA-13B-llama2-v1-explanatory). Welcome to check them out!
-- [x] [2023.8.23] Refactor code, and release new model [LISA-13B-llama2-v1](https://huggingface.co/xinlai/LISA-13B-llama2-v1). Welcome to check it out!
-- [x] [2023.8.9] Training code is released!
-- [x] [2023.8.4] [Online Demo](http://103.170.5.190:7860/) is released! 
-- [x] [2023.8.4] [*ReasonSeg* Dataset](https://drive.google.com/drive/folders/125mewyg5Ao6tZ3ZdJ-1-E3n04LGVELqy?usp=sharing) and the [LISA-13B-llama2-v0-explanatory](https://huggingface.co/xinlai/LISA-13B-llama2-v0-explanatory) model are released! 
-- [x] [2023.8.3] Inference code and the [LISA-13B-llama2-v0](https://huggingface.co/xinlai/LISA-13B-llama2-v0) model are released. Welcome to check them out!
-- [x] [2023.8.2] [Paper](https://arxiv.org/pdf/2308.00692.pdf) is released and GitHub repo is created.
 
-**LISA: Reasoning Segmentation via Large Language Model [[Paper](https://arxiv.org/abs/2308.00692)]** <br />
-[Xin Lai](https://scholar.google.com/citations?user=tqNDPA4AAAAJ&hl=zh-CN),
-[Zhuotao Tian](https://scholar.google.com/citations?user=mEjhz-IAAAAJ&hl=en),
-[Yukang Chen](https://scholar.google.com/citations?user=6p0ygKUAAAAJ&hl=en),
-[Yanwei Li](https://scholar.google.com/citations?user=I-UCPPcAAAAJ&hl=zh-CN),
-[Yuhui Yuan](https://scholar.google.com/citations?user=PzyvzksAAAAJ&hl=en),
-[Shu Liu](https://scholar.google.com.hk/citations?user=BUEDUFkAAAAJ&hl=zh-CN),
-[Jiaya Jia](https://scholar.google.com/citations?user=XPAkzTEAAAAJ&hl=en)<br />
 
-**LISA++: An Improved Baseline for Reasoning Segmentation with Large Language Model [[Paper](https://arxiv.org/abs/2312.17240)]** <br />
-[Senqiao Yang](https://scholar.google.com/citations?user=NcJc-RwAAAAJ),
-Tianyuan Qu,
-[Xin Lai](https://scholar.google.com/citations?user=tqNDPA4AAAAJ&hl=zh-CN),
-[Zhuotao Tian](https://scholar.google.com/citations?user=mEjhz-IAAAAJ&hl=en),
-[Bohao Peng](https://scholar.google.com.hk/citations?user=9xcCm1oAAAAJ),
-[Shu Liu](https://scholar.google.com.hk/citations?user=BUEDUFkAAAAJ&hl=zh-CN),
-[Jiaya Jia](https://scholar.google.com/citations?user=XPAkzTEAAAAJ&hl=en)<br /> -->
-
-## Abstract
+<!-- ## Abstract
 While automated segmentation for electron microscopy has advanced significantly, existing methods remain limited by rigid visual prompting mechanisms and a critical absence of integrated scientific priors. To address these challenges, we present **ReSEM**, a knowledge-aware multi-modal framework designed for scientific **Re**asoning **S**egmentation for **E**lectron **M**icroscopy, explicitly grounding pixel-level features in domain knowledge. We construct a large-scale, multi-domain Electron Microscopy benchmark that comprises $\sim$ 20k reasoning Q\&A pairs, generated via a hallucination-resistant pipeline to facilitate robust instruction following and inject domain-specific semantics. To further refine reasoning capabilities, we introduce Micro-Group Relative Policy Optimization, a novel post-training strategy that aligns model outputs with scientifically accurate and visually grounded reasoning paths. Extensive experiments demonstrate that ReSEM achieves state-of-the-art performance across diverse EM modalities, achieving a mean IoU of 62.4\% and significantly outperforming current baselines.
-For more details, please refer to the [paper](https://arxiv.org/abs/2308.00692).
+For more details, please refer to the [paper](https://arxiv.org/abs/2308.00692). -->
 
 <!-- ## Highlights
 **LISA** unlocks the new segmentation capabilities of multi-modal LLMs, and can handle cases involving: 
@@ -104,14 +79,15 @@ For more details, please refer to the [paper](https://arxiv.org/abs/2308.00692).
 
 **LISA** also demonstrates robust zero-shot capability when trained exclusively on reasoning-free datasets. In addition, fine-tuning the model with merely 239 reasoning segmentation image-instruction pairs results in further performance enhancement. -->
 
-## Experimental results
-<p align="center"> <img src="imgs/table1.png" width="100%"> </p>
 
 ## Installation
 ```
 pip install -r requirements.txt
 pip install flash-attn --no-build-isolation
 ```
+
+## Dataset
+The ReasonEM dataset can be downloaded from [this link](https://huggingface.co/datasets/cjyhgface/ReasonEM).
 
 ## Training
 ### Data Preparation
@@ -246,7 +222,7 @@ deepspeed --master_port=24999 train_ds.py \
  
 ## Inference 
 
-To chat with [ReSEM-13B-llama2-sft]() or [ReSEM-13B-llama2-grpo]():
+To chat with [ReSEM-13B-llama2-sft](https://huggingface.co/cjyhgface/ReSEM-13B-sft) or [ReSEM-13B-llama2-grpo](https://huggingface.co/cjyhgface/ReSEM-13B-rft):
 ```
 CUDA_VISIBLE_DEVICES=0 python batch_chat.py --version='ReSEM-13B-llama2-xxx'
 python batch_chat.py --precision='bf16' \
@@ -266,9 +242,6 @@ chat_sample.json is arranged as:
 
 ```
 
-## Dataset
-The ReasonEM dataset will be released soon.
-
 
 ## Citation 
 If you find this project useful in your research, please consider citing:
@@ -278,4 +251,4 @@ If you find this project useful in your research, please consider citing:
 ```
 
 ## Acknowledgement
--  This work is built upon the [LLaVA](https://github.com/haotian-liu/LLaVA), [SAM](https://github.com/facebookresearch/segment-anything), [LISA](https://github.com/JIA-Lab-research/LISA) and [PathChat](https://anonymous.4open.science/r/PathChat-Seg-3116/README.md).
+- Thanks to the contribution of [LLaVA](https://github.com/haotian-liu/LLaVA), [SAM](https://github.com/facebookresearch/segment-anything), [LISA](https://github.com/JIA-Lab-research/LISA), and [PathChat](https://anonymous.4open.science/r/PathChat-Seg-3116/README.md), which provide valuable foundations for this work.
